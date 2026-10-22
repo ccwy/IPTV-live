@@ -34,21 +34,21 @@ body {
 .sidebar-section { padding: 10px 12px; border-bottom: 1px solid rgba(15,52,96,.5); }
 .url-row { display: flex; gap: 6px; }
 .url-row input {
-  flex: 1; min-width: 0; padding: 8px 10px; background: #1a1a2e; border: 1px solid #0f3460;
-  border-radius: 6px; color: #e0e0e0; font-size: 13px; outline: none;
+  flex: 1; min-width: 0; padding: 5px 8px; background: #1a1a2e; border: 1px solid #0f3460;
+  border-radius: 6px; color: #e0e0e0; font-size: 12px; outline: none;
 }
 .url-row input:focus { border-color: #e94560; }
 .btn {
-  padding: clamp(4px, 1.5vw, 8px) clamp(8px, 2.5vw, 14px); background: #e94560; color: #fff; border: none; border-radius: 6px;
-  font-size: clamp(11px, 1.8vw, 13px); cursor: pointer; white-space: nowrap; transition: background .2s;
+  padding: clamp(4px, 1.5vw, 4px) clamp(8px, 2.5vw, 10px); background: #e94560; color: #fff; border: none; border-radius: 6px;
+  font-size: clamp(11px, 1.8vw, 12px); cursor: pointer; white-space: nowrap; transition: background .2s;
 }
 .btn:hover { background: #c73652; }
 .btn:disabled { background: #555; cursor: not-allowed; }
 .btn-secondary { background: #0f3460; }
 .btn-secondary:hover { background: #1a4a7a; }
 .file-label {
-  display: block; text-align: center; padding: clamp(4px, 1.2vw, 7px); margin-top: 8px; background: #0f3460;
-  border-radius: 6px; font-size: clamp(10px, 1.6vw, 12px); color: #a0c0e0; cursor: pointer; transition: background .2s;
+  display: block; text-align: center; padding: clamp(4px, 1.2vw, 5px); margin-top: 8px; background: #0f3460;
+  border-radius: 6px; font-size: clamp(10px, 1.6vw, 11px); color: #a0c0e0; cursor: pointer; transition: background .2s;
 }
 .file-label:hover { background: #1a4a7a; }
 /* 内置播放列表快速选择 */
@@ -68,8 +68,21 @@ body {
 }
 .sidebar-section input[type="text"]:focus, .sidebar-section select:focus { border-color: #e94560; }
 .sidebar-section select option { background: #1a1a2e; }
-#channel-count { padding: 8px 12px; font-size: 12px; color: #7a7a9a; border-bottom: 1px solid rgba(15,52,96,.5); }
+#channel-count { padding: 8px 12px; font-size: 12px; color: #7a7a9a; border-bottom: 1px solid rgba(15,52,96,.5); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #channel-count .playlist-name { color: #a0c0e0; }
+#clear-playlists { background: none; border: none; color: #555; font-size: 11px; cursor: pointer; padding: 2px 4px; white-space: nowrap; }
+#clear-playlists:hover { color: #e94560; }
+/* ===== 播放列表分组 ===== */
+.playlist-group { list-style: none; }
+.playlist-group-header {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: #0f3460;
+  font-size: 12px; color: #e0e0e0; cursor: pointer; user-select: none;
+}
+.playlist-group-header:hover { background: #1a4a7a; }
+.playlist-group-header .arrow { font-size: 10px; width: 12px; }
+.playlist-group-header .playlist-group-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.playlist-group-header .group-count { color: #a0c0e0; font-size: 11px; white-space: nowrap; }
+.playlist-channels { list-style: none; }
 /* ===== 频道列表 ===== */
 #channel-list { flex: 1; overflow-y: auto; list-style: none; }
 #channel-list::-webkit-scrollbar { width: 6px; }
@@ -179,7 +192,7 @@ body {
       <option value="">全部分组</option>
     </select>
   </div>
-  <div id="channel-count">共 0 个频道</div>
+  <div id="channel-count"><span id="channel-count-text">共 0 个频道</span><button id="clear-playlists" title="清空所有播放列表">清空</button></div>
   <ul id="channel-list">
     <li class="empty-tip">输入播放列表URL并点击加载</li>
   </ul>
@@ -220,11 +233,14 @@ body {
   var groupSelect = document.getElementById('group-select');
   var channelList = document.getElementById('channel-list');
   var channelCount = document.getElementById('channel-count');
+  var channelCountText = document.getElementById('channel-count-text');
+  var clearBtn = document.getElementById('clear-playlists');
   var video = document.getElementById('video');
   var channelNameOverlay = document.getElementById('channel-name-overlay');
 
   // 状态
-  var allChannels = [];
+  var playlists = []; // [{ id, name, channels: [], collapsed: false, sourceUrl: '' }]
+  var playlistSeq = 0;
   var currentChannel = null;
   var hls = null;
   var nativeFallback = false;
@@ -268,21 +284,67 @@ body {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  function getAllChannels() {
+    var all = [];
+    for (var i = 0; i < playlists.length; i++) all = all.concat(playlists[i].channels);
+    return all;
+  }
+
+  function getTotalChannelCount() {
+    var n = 0;
+    for (var i = 0; i < playlists.length; i++) n += playlists[i].channels.length;
+    return n;
+  }
+
+  // 检测文本类型：HLS 直播源 / M3U 频道播放列表 / 未知
+  function detectSourceType(text) {
+    if (text.indexOf('#EXT-X-STREAM-INF') !== -1) return 'hls-master';
+    if (text.indexOf('#EXT-X-') !== -1 && text.indexOf('#EXTINF') !== -1) return 'hls-media';
+    if (text.indexOf('#EXTINF') !== -1) return 'm3u-playlist';
+    return 'unknown';
+  }
+
+  // 从 URL 提取文件名（去扩展名）作为播放列表/直播源名称
+  function urlToName(url) {
+    try {
+      var path = new URL(url).pathname;
+      var file = path.substring(path.lastIndexOf('/') + 1);
+      var dot = file.lastIndexOf('.');
+      if (dot > 0) file = file.substring(0, dot);
+      return decodeURIComponent(file) || '直播源';
+    } catch(e) { return '直播源'; }
+  }
+
+  // 添加播放列表（sourceUrl 相同时替换 channels，避免重复添加）
+  function addPlaylist(name, channels, sourceUrl) {
+    if (sourceUrl) {
+      for (var i = 0; i < playlists.length; i++) {
+        if (playlists[i].sourceUrl === sourceUrl) {
+          playlists[i].name = name;
+          playlists[i].channels = channels;
+          return;
+        }
+      }
+    }
+    playlists.push({ id: ++playlistSeq, name: name, channels: channels, collapsed: false, sourceUrl: sourceUrl || '' });
+  }
+
   function showChannelCount() {
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     var list = getFilteredChannels();
-    var countText = '共 ' + list.length + ' / ' + allChannels.length + ' 个频道';
+    var total = getTotalChannelCount();
+    var countText = '共 ' + list.length + ' / ' + total + ' 个频道（' + playlists.length + ' 个列表）';
     if (currentPlaylistName) {
-      channelCount.innerHTML = '<span class="playlist-name">' + escapeHtml(currentPlaylistName) + '</span> · ' + countText;
+      channelCountText.innerHTML = '<span class="playlist-name">' + escapeHtml(currentPlaylistName) + '</span> · ' + countText;
     } else {
-      channelCount.textContent = countText;
+      channelCountText.textContent = countText;
     }
     channelCount.className = '';
   }
 
   function setStatus(msg, type) {
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
-    channelCount.textContent = msg;
+    channelCountText.textContent = msg;
     channelCount.className = type || '';
     // 错误/成功状态显示一段时间后恢复为频道数量
     if (type === 'status-error' || type === 'status-ok') {
@@ -360,13 +422,25 @@ body {
         return resp.text();
       })
       .then(function(text) {
+        var type = detectSourceType(text);
+        if (type === 'hls-media' || type === 'hls-master') {
+          // 直播源（HLS 切片清单/多码率主列表），直接播放，不加入频道列表
+          currentPlaylistName = name || urlToName(url);
+          var ch = { name: currentPlaylistName, tvgId: '', tvgName: '', logo: '', group: '直播源', url: url };
+          playChannel(ch);
+          setStatus('检测到直播源，直接播放', 'status-ok');
+          try { localStorage.setItem('iptv-playlist-url', url); } catch(e) {}
+          setActiveBuiltinBtn(url);
+          return;
+        }
         var channels = parseM3U(text);
         if (channels.length === 0) throw new Error('未解析到任何频道');
-        allChannels = channels;
-        currentPlaylistName = name || '';
+        var plName = name || urlToName(url);
+        addPlaylist(plName, channels, url);
+        currentPlaylistName = plName;
         buildGroupSelect();
         renderChannelList();
-        setStatus('已加载 ' + channels.length + ' 个频道', 'status-ok');
+        setStatus('已加载播放列表：' + plName + '（' + channels.length + ' 个频道）', 'status-ok');
         try { localStorage.setItem('iptv-playlist-url', url); } catch(e) {}
         setActiveBuiltinBtn(url);
       })
@@ -380,16 +454,23 @@ body {
     setStatus('正在读取文件...', 'status-loading');
     var reader = new FileReader();
     reader.onload = function(e) {
-      var channels = parseM3U(e.target.result);
+      var text = e.target.result;
+      var type = detectSourceType(text);
+      if (type === 'hls-media' || type === 'hls-master') {
+        setStatus('本地直播源文件无法直接播放，请使用直播源 URL', 'status-error');
+        return;
+      }
+      var channels = parseM3U(text);
       if (channels.length === 0) {
         setStatus('文件中未解析到频道', 'status-error');
         return;
       }
-      allChannels = channels;
-      currentPlaylistName = '本地文件';
+      var name = file.name.replace(/\.(m3u8?|txt)$/i, '') || '本地文件';
+      addPlaylist(name, channels, '');
+      currentPlaylistName = name;
       buildGroupSelect();
       renderChannelList();
-      setStatus('已从文件加载 ' + channels.length + ' 个频道', 'status-ok');
+      setStatus('已加载播放列表：' + name + '（' + channels.length + ' 个频道）', 'status-ok');
       setActiveBuiltinBtn('');
     };
     reader.onerror = function() { setStatus('读取文件失败', 'status-error'); };
@@ -399,12 +480,17 @@ body {
   /* ===== 分组与渲染 ===== */
   function buildGroupSelect() {
     var groupSet = {};
-    for (var i = 0; i < allChannels.length; i++) {
-      var g = allChannels[i].group || '未分组';
-      groupSet[g] = (groupSet[g] || 0) + 1;
+    var total = 0;
+    for (var i = 0; i < playlists.length; i++) {
+      var chs = playlists[i].channels;
+      for (var j = 0; j < chs.length; j++) {
+        var g = chs[j].group || '未分组';
+        groupSet[g] = (groupSet[g] || 0) + 1;
+        total++;
+      }
     }
     var groups = Object.keys(groupSet).sort();
-    groupSelect.innerHTML = '<option value="">全部分组 (' + allChannels.length + ')</option>';
+    groupSelect.innerHTML = '<option value="">全部分组 (' + total + ')</option>';
     for (var j = 0; j < groups.length; j++) {
       var opt = document.createElement('option');
       opt.value = groups[j];
@@ -416,7 +502,7 @@ body {
   function getFilteredChannels() {
     var keyword = searchInput.value.trim().toLowerCase();
     var group = groupSelect.value;
-    return allChannels.filter(function(ch) {
+    return getAllChannels().filter(function(ch) {
       if (group && (ch.group || '未分组') !== group) return false;
       if (keyword && ch.name.toLowerCase().indexOf(keyword) === -1) return false;
       return true;
@@ -424,60 +510,112 @@ body {
   }
 
   function renderChannelList() {
-    var list = getFilteredChannels();
     showChannelCount();
     channelList.innerHTML = '';
-    if (list.length === 0) {
+    if (playlists.length === 0) {
       var tip = document.createElement('li');
       tip.className = 'empty-tip';
-      tip.textContent = allChannels.length === 0 ? '请先加载播放列表' : '无匹配频道';
+      tip.textContent = '请先加载播放列表';
       channelList.appendChild(tip);
       return;
     }
+    var keyword = searchInput.value.trim().toLowerCase();
+    var group = groupSelect.value;
+    var hasFilter = !!(keyword || group);
     var frag = document.createDocumentFragment();
-    for (var i = 0; i < list.length; i++) {
-      (function(ch) {
-        var li = document.createElement('li');
-        li.className = 'channel-item' + (currentChannel && currentChannel.url === ch.url ? ' active' : '');
-        li.setAttribute('data-url', ch.url);
-
-        // logo（有图用img，无图用首字母占位）
-        var logoEl;
-        if (ch.logo) {
-          logoEl = document.createElement('img');
-          logoEl.className = 'channel-logo';
-          logoEl.loading = 'lazy';
-          logoEl.alt = '';
-          logoEl.src = ch.logo;
-          logoEl.onerror = function() {
-            var fb = document.createElement('span');
-            fb.className = 'channel-logo';
-            fb.textContent = ch.name.charAt(0) || '?';
-            logoEl.replaceWith(fb);
-          };
-        } else {
-          logoEl = document.createElement('span');
-          logoEl.className = 'channel-logo';
-          logoEl.textContent = ch.name.charAt(0) || '?';
+    var anyMatch = false;
+    for (var p = 0; p < playlists.length; p++) {
+      (function(pl) {
+        var matched = pl.channels.filter(function(ch) {
+          if (group && (ch.group || '未分组') !== group) return false;
+          if (keyword && ch.name.toLowerCase().indexOf(keyword) === -1) return false;
+          return true;
+        });
+        // 筛选时无匹配频道的分组不显示
+        if (hasFilter && matched.length === 0) return;
+        anyMatch = anyMatch || matched.length > 0;
+        // 筛选时自动展开以显示结果
+        var collapsed = hasFilter ? false : pl.collapsed;
+        var groupEl = document.createElement('li');
+        groupEl.className = 'playlist-group';
+        groupEl.setAttribute('data-playlist-id', pl.id);
+        // 分组标题栏
+        var header = document.createElement('div');
+        header.className = 'playlist-group-header';
+        var arrow = document.createElement('span');
+        arrow.className = 'arrow';
+        arrow.textContent = collapsed ? '▶' : '▼';
+        var title = document.createElement('span');
+        title.className = 'playlist-group-title';
+        title.textContent = pl.name;
+        var cnt = document.createElement('span');
+        cnt.className = 'group-count';
+        cnt.textContent = hasFilter ? '(' + matched.length + '/' + pl.channels.length + ')' : '(' + pl.channels.length + ')';
+        header.appendChild(arrow);
+        header.appendChild(title);
+        header.appendChild(cnt);
+        header.addEventListener('click', function() {
+          pl.collapsed = !pl.collapsed;
+          renderChannelList();
+        });
+        groupEl.appendChild(header);
+        // 展开时渲染频道列表
+        if (!collapsed) {
+          var chList = document.createElement('ul');
+          chList.className = 'playlist-channels';
+          var list = hasFilter ? matched : pl.channels;
+          for (var i = 0; i < list.length; i++) {
+            (function(ch) {
+              var li = document.createElement('li');
+              li.className = 'channel-item' + (currentChannel && currentChannel.url === ch.url ? ' active' : '');
+              li.setAttribute('data-url', ch.url);
+              // logo（有图用img，无图用首字母占位）
+              var logoEl;
+              if (ch.logo) {
+                logoEl = document.createElement('img');
+                logoEl.className = 'channel-logo';
+                logoEl.loading = 'lazy';
+                logoEl.alt = '';
+                logoEl.src = ch.logo;
+                logoEl.onerror = function() {
+                  var fb = document.createElement('span');
+                  fb.className = 'channel-logo';
+                  fb.textContent = ch.name.charAt(0) || '?';
+                  logoEl.replaceWith(fb);
+                };
+              } else {
+                logoEl = document.createElement('span');
+                logoEl.className = 'channel-logo';
+                logoEl.textContent = ch.name.charAt(0) || '?';
+              }
+              li.appendChild(logoEl);
+              // 频道信息
+              var info = document.createElement('div');
+              info.className = 'channel-info';
+              var nm = document.createElement('div');
+              nm.className = 'channel-name';
+              nm.textContent = ch.name;
+              var gp = document.createElement('div');
+              gp.className = 'channel-group';
+              gp.textContent = ch.group || '未分组';
+              info.appendChild(nm);
+              info.appendChild(gp);
+              li.appendChild(info);
+              li.addEventListener('click', function() { playChannel(ch); });
+              chList.appendChild(li);
+            })(list[i]);
+          }
+          groupEl.appendChild(chList);
         }
-        li.appendChild(logoEl);
-
-        // 频道信息
-        var info = document.createElement('div');
-        info.className = 'channel-info';
-        var nm = document.createElement('div');
-        nm.className = 'channel-name';
-        nm.textContent = ch.name;
-        var gp = document.createElement('div');
-        gp.className = 'channel-group';
-        gp.textContent = ch.group || '未分组';
-        info.appendChild(nm);
-        info.appendChild(gp);
-        li.appendChild(info);
-
-        li.addEventListener('click', function() { playChannel(ch); });
-        frag.appendChild(li);
-      })(list[i]);
+        frag.appendChild(groupEl);
+      })(playlists[p]);
+    }
+    if (hasFilter && !anyMatch) {
+      var emptyTip = document.createElement('li');
+      emptyTip.className = 'empty-tip';
+      emptyTip.textContent = '无匹配频道';
+      channelList.appendChild(emptyTip);
+      return;
     }
     channelList.appendChild(frag);
   }
@@ -629,6 +767,15 @@ body {
   });
   searchInput.addEventListener('input', renderChannelList);
   groupSelect.addEventListener('change', renderChannelList);
+  clearBtn.addEventListener('click', function() {
+    playlists = [];
+    playlistSeq = 0;
+    currentPlaylistName = '';
+    buildGroupSelect();
+    renderChannelList();
+    setStatus('已清空播放列表', 'status-ok');
+    setActiveBuiltinBtn('');
+  });
 
   /* ===== 自建直播控制条 ===== */
   var playerArea = document.getElementById('player-area');
