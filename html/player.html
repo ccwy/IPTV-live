@@ -481,13 +481,19 @@ body {
 
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
-        maxBufferLength: 30,
-        manifestLoadingTimeOut: 10000,
-        manifestLoadingMaxRetry: 2,
-        levelLoadingTimeOut: 10000,
-        fragLoadingTimeOut: 20000
+        liveSyncDurationCount: 6,            // 播放点距直播边缘6个分片，弱网下缓冲余量更大
+        liveMaxLatencyDurationCount: 12,     // 最大延迟12个分片，配合更大的缓冲
+        maxBufferLength: 90,                 // 前向缓冲从90秒延长到60秒，应对网络波动
+        maxMaxBufferLength: 150,             // 缓冲上限150秒，防止内存过度增长
+        manifestLoadingTimeOut: 30000,       // manifest加载超时从10秒延长到30秒
+        manifestLoadingMaxRetry: 6,          // manifest重试从2次增加到6次
+        manifestLoadingRetryDelay: 1000,     // manifest重试间隔1秒
+        levelLoadingTimeOut: 30000,          // 级别加载超时从10秒延长到30秒
+        levelLoadingMaxRetry: 6,             // 级别加载重试6次
+        levelLoadingRetryDelay: 1000,        // 级别加载重试间隔1秒
+        fragLoadingTimeOut: 60000,           // 分片加载超时从20秒延长到60秒
+        fragLoadingMaxRetry: 10,              // 分片加载重试10次，弱网兜底
+        fragLoadingRetryDelay: 500           // 分片重试间隔500ms
       });
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
