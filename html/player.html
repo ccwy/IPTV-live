@@ -247,6 +247,14 @@ body {
     return PROXY_PREFIX + encodeURIComponent(u);
   }
 
+  // 从代理路径中还原原始 URL，供转码端点使用（/transcode 需 http/https 直链）
+  function extractOriginalUrl(u) {
+    if (u && u.indexOf('/proxy?url=') === 0) {
+      try { return decodeURIComponent(u.substring(11)); } catch(e) { return u; }
+    }
+    return u;
+  }
+
   // 根据 URL 匹配内置播放列表名称，未匹配返回空字符串
   function matchBuiltinName(url) {
     if (!url) return '';
@@ -522,11 +530,12 @@ body {
           if (data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR) {
             /* 浏览器 MSE 不支持该编码（常见为 H.265/HEVC），recoverMediaError 无效。
                优先尝试服务端转码（HEVC→H.264），不可用或已尝试过则回退原生播放。
-               currentChannel.url 为未走代理的原始频道 URL，直接传给 /transcode 由 ffmpeg 拉流 */
+               currentChannel.url 经代理加载后可能为 /proxy?url=xxx 格式，需用 extractOriginalUrl
+               还原为 http/https 直链再传给 /transcode，否则服务端因非 http 协议返回 400 */
             if (transcodeStatus.enabled && transcodeStatus.ffmpegAvailable && !transcodeTried && currentChannel) {
               transcodeTried = true; // 同一频道仅尝试一次，防止转码失败后无限循环
               destroyHls();
-              var transcodeUrl = '/transcode?url=' + encodeURIComponent(currentChannel.url);
+              var transcodeUrl = '/transcode?url=' + encodeURIComponent(extractOriginalUrl(currentChannel.url));
               setStatus('编码不支持，正在转码播放...', 'status-loading');
               hls = new Hls({
                 liveSyncDurationCount: 1,

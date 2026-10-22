@@ -99,7 +99,7 @@ services:
       - "8883:8080"                  # 左侧为 NAS 访问端口，可按需修改
     environment:
       # 内置播放列表（JSON 数组，每项含 name 和 url）
-      PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]'
+      PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"}]'
       # PORT: "8080"                 # 容器内端口，默认 8080；修改时需同步端口映射右侧
       ENABLE_TRANSCODE: "true"       # H.265/HEVC 转码，默认启用；性能不足时可设为 false
     restart: unless-stopped

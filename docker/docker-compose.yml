@@ -15,7 +15,7 @@ services:
     environment:
       # 内置播放列表，JSON 数组格式，每项含 name（显示名称）和 url（M3U 地址）
       # 整段用单引号包裹，内部双引号无需转义；不设置则使用默认播放列表
-      PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]'
+      PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"}]'
       # 容器内监听端口，默认 8080；修改时需同步上方端口映射右侧的值
       # PORT: "8080"
       # H.265/HEVC 转码（需镜像内含 ffmpeg，默认启用；NAS 无硬解性能不足时可设为 false）
