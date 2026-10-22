@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<title>IPTV Live</title>
+<link rel="icon" href="data:image/x-icon;,">
+<!-- hls.js：优先加载本地 hls.min.js，失败回退 CDN（jsdelivr），保证离线可用 -->
+<script src="/hls.min.js"></script>
+<script>window.Hls || document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"><\/script>')</script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden;
+}
+/* ===== 侧边栏 ===== */
+#sidebar {
+  width: 280px; min-width: 280px; background: #16213e; display: flex; flex-direction: column;
+  border-right: 1px solid #0f3460; transition: margin-left .3s ease, min-width .3s ease, width .3s ease;
+  z-index: 10;
+}
+#sidebar.collapsed { margin-left: -280px; }
+.sidebar-header {
+  padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid #0f3460; background: #0f3460;
+}
+.sidebar-header h1 { font-size: 16px; font-weight: 600; color: #e94560; letter-spacing: 1px; }
+#toggle-sidebar {
+  background: none; border: none; color: #a0a0c0; font-size: 18px; cursor: pointer; padding: 4px 8px;
+  border-radius: 4px;
+}
+#toggle-sidebar:hover { background: rgba(255,255,255,.1); color: #fff; }
+.sidebar-section { padding: 10px 12px; border-bottom: 1px solid rgba(15,52,96,.5); }
+.url-row { display: flex; gap: 6px; }
+.url-row input {
+  flex: 1; min-width: 0; padding: 8px 10px; background: #1a1a2e; border: 1px solid #0f3460;
+  border-radius: 6px; color: #e0e0e0; font-size: 13px; outline: none;
+}
+.url-row input:focus { border-color: #e94560; }
+.btn {
+  padding: 8px 14px; background: #e94560; color: #fff; border: none; border-radius: 6px;
+  font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .2s;
+}
+.btn:hover { background: #c73652; }
+.btn:disabled { background: #555; cursor: not-allowed; }
+.btn-secondary { background: #0f3460; }
+.btn-secondary:hover { background: #1a4a7a; }
+.file-label {
+  display: block; text-align: center; padding: 7px; margin-top: 8px; background: #0f3460;
+  border-radius: 6px; font-size: 12px; color: #a0c0e0; cursor: pointer; transition: background .2s;
+}
+.file-label:hover { background: #1a4a7a; }
+/* 内置播放列表快速选择 */
+.builtin-playlists { margin-bottom: 10px; }
+.builtin-playlists .builtin-title { font-size: 12px; color: #7a7a9a; margin-bottom: 6px; }
+.builtin-playlists .builtin-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.builtin-btn {
+  padding: 5px 10px; background: #0f3460; color: #a0c0e0; border: 1px solid #1a4a7a;
+  border-radius: 14px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background .2s, color .2s, border-color .2s;
+}
+.builtin-btn:hover { background: #1a4a7a; color: #fff; }
+.builtin-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
+.sidebar-section input[type="text"], .sidebar-section select {
+  width: 100%; padding: 8px 10px; background: #1a1a2e; border: 1px solid #0f3460;
+  border-radius: 6px; color: #e0e0e0; font-size: 13px; outline: none; margin-bottom: 8px;
+}
+.sidebar-section input[type="text"]:focus, .sidebar-section select:focus { border-color: #e94560; }
+.sidebar-section select option { background: #1a1a2e; }
+#channel-count { padding: 8px 12px; font-size: 12px; color: #7a7a9a; border-bottom: 1px solid rgba(15,52,96,.5); }
+/* ===== 频道列表 ===== */
+#channel-list { flex: 1; overflow-y: auto; list-style: none; }
+#channel-list::-webkit-scrollbar { width: 6px; }
+#channel-list::-webkit-scrollbar-thumb { background: #0f3460; border-radius: 3px; }
+.channel-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+  transition: background .15s; border-left: 3px solid transparent;
+}
+.channel-item:hover { background: rgba(15,52,96,.6); }
+.channel-item.active { background: rgba(233,69,96,.15); border-left-color: #e94560; }
+.channel-logo {
+  width: 40px; height: 40px; min-width: 40px; border-radius: 6px; background: #000;
+  object-fit: contain; display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color: #555;
+}
+.channel-info { flex: 1; min-width: 0; }
+.channel-name {
+  font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #d0d0e0;
+}
+.channel-item.active .channel-name { color: #e94560; font-weight: 600; }
+.channel-group { font-size: 11px; color: #6a6a8a; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.empty-tip { padding: 30px 16px; text-align: center; color: #555; font-size: 13px; }
+/* ===== 主区域 ===== */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+#sidebar-toggle-float {
+  position: absolute; top: 10px; left: 10px; z-index: 20; background: rgba(15,52,96,.85);
+  border: none; color: #fff; font-size: 16px; padding: 6px 10px; border-radius: 6px;
+  cursor: pointer; display: none; backdrop-filter: blur(4px);
+}
+#sidebar-toggle-float:hover { background: #e94560; }
+#player-area {
+  flex: 1; background: #000; position: relative; display: flex; align-items: center;
+  justify-content: center; overflow: hidden;
+}
+#video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+#channel-name-overlay {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,.65); color: #fff; padding: 6px 18px; border-radius: 20px;
+  font-size: 14px; pointer-events: none; opacity: 0; transition: opacity .3s;
+  backdrop-filter: blur(4px); white-space: nowrap; max-width: 80%; overflow: hidden;
+  text-overflow: ellipsis;
+}
+#channel-name-overlay.show { opacity: 1; }
+#status-bar {
+  padding: 8px 16px; background: #16213e; border-top: 1px solid #0f3460; font-size: 12px;
+  color: #8a8aaa; display: flex; gap: 16px; align-items: center; min-height: 34px;
+}
+#status-text { flex-shrink: 0; }
+#status-url { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: #555577; font-size: 11px; }
+.status-loading { color: #e94560; }
+.status-error { color: #ff6b6b; }
+.status-ok { color: #51cf66; }
+/* ===== 移动端 ===== */
+@media (max-width: 768px) {
+  #sidebar {
+    position: fixed; left: 0; top: 0; bottom: 0; box-shadow: 4px 0 20px rgba(0,0,0,.5);
+  }
+  #sidebar.collapsed { margin-left: -280px; }
+  #sidebar-toggle-float { display: block; }
+  #channel-name-overlay { font-size: 12px; top: 50px; }
+}
+</style>
+</head>
+<body>
+
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <h1>IPTV Live</h1>
+    <button id="toggle-sidebar" title="收起侧边栏">☰</button>
+  </div>
+  <div class="sidebar-section">
+    <div id="builtin-playlists" class="builtin-playlists" hidden></div>
+    <div class="url-row">
+      <input type="text" id="url-input" placeholder="播放列表 URL">
+      <button class="btn" id="load-btn">加载</button>
+    </div>
+    <label class="file-label" for="file-input">📂 上传本地播放列表 (.m3u / .m3u8)</label>
+    <input type="file" id="file-input" accept=".m3u,.m3u8" hidden>
+  </div>
+  <div class="sidebar-section">
+    <input type="text" id="search-input" placeholder="🔍 搜索频道...">
+    <select id="group-select">
+      <option value="">全部分组</option>
+    </select>
+  </div>
+  <div id="channel-count">共 0 个频道</div>
+  <ul id="channel-list">
+    <li class="empty-tip">输入播放列表URL并点击加载</li>
+  </ul>
+</aside>
+
+<main id="main">
+  <button id="sidebar-toggle-float" title="展开侧边栏">☰</button>
+  <div id="player-area">
+    <video id="video" controls autoplay playsinline></video>
+    <div id="channel-name-overlay"></div>
+  </div>
+  <div id="status-bar">
+    <span id="status-text">就绪</span>
+    <span id="status-url"></span>
+  </div>
+</main>
+
+<script>
+(function() {
+  'use strict';
+
+  var DEFAULT_PLAYLIST = 'https://iptv-org.github.io/iptv/index.m3u';
+  var PROXY_PREFIX = '/proxy?url=';
+
+  // DOM
+  var sidebar = document.getElementById('sidebar');
+  var toggleSidebar = document.getElementById('toggle-sidebar');
+  var toggleFloat = document.getElementById('sidebar-toggle-float');
+  var builtinWrap = document.getElementById('builtin-playlists');
+  var urlInput = document.getElementById('url-input');
+  var loadBtn = document.getElementById('load-btn');
+  var fileInput = document.getElementById('file-input');
+  var searchInput = document.getElementById('search-input');
+  var groupSelect = document.getElementById('group-select');
+  var channelList = document.getElementById('channel-list');
+  var channelCount = document.getElementById('channel-count');
+  var video = document.getElementById('video');
+  var channelNameOverlay = document.getElementById('channel-name-overlay');
+  var statusText = document.getElementById('status-text');
+  var statusUrl = document.getElementById('status-url');
+
+  // 状态
+  var allChannels = [];
+  var currentChannel = null;
+  var hls = null;
+  var overlayTimer = null;
+  var builtinPlaylists = [];
+
+  /* ===== 工具函数 ===== */
+  function proxyUrl(u) {
+    if (!u) return '';
+    if (u.indexOf('/proxy?url=') === 0) return u;
+    if (u.indexOf(location.origin + '/proxy') === 0) return u;
+    return PROXY_PREFIX + encodeURIComponent(u);
+  }
+
+  function setStatus(msg, type) {
+    statusText.textContent = msg;
+    statusText.className = type || '';
+  }
+
+  function getDomain(u) {
+    try { return new URL(u).hostname; } catch(e) { return u; }
+  }
+
+  function showChannelName(name) {
+    channelNameOverlay.textContent = name;
+    channelNameOverlay.classList.add('show');
+    if (overlayTimer) clearTimeout(overlayTimer);
+    overlayTimer = setTimeout(function() {
+      channelNameOverlay.classList.remove('show');
+    }, 4000);
+  }
+
+  /* ===== M3U 解析 ===== */
+  function parseM3U(text) {
+    var channels = [];
+    var lines = text.split(/\r?\n/);
+    var pending = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line) continue;
+      if (line.charAt(0) === '#') {
+        if (line.indexOf('#EXTINF') === 0) {
+          pending = parseExtInf(line);
+        }
+        continue;
+      }
+      // URL 行
+      var ch = pending || {
+        name: getDomain(line), tvgId: '', tvgName: '', logo: '', group: '未分组', url: ''
+      };
+      ch.url = line;
+      if (!ch.name) ch.name = getDomain(line);
+      channels.push(ch);
+      pending = null;
+    }
+    return channels;
+  }
+
+  function parseExtInf(line) {
+    var commaIdx = line.indexOf(',');
+    var name = commaIdx >= 0 ? line.substring(commaIdx + 1).trim() : '';
+    var attrPart = commaIdx >= 0 ? line.substring(0, commaIdx) : line;
+    function attr(key) {
+      var m = attrPart.match(new RegExp(key + '="([^"]*)"'));
+      return m ? m[1] : '';
+    }
+    return {
+      name: name || '未知频道',
+      tvgId: attr('tvg-id'),
+      tvgName: attr('tvg-name'),
+      logo: attr('tvg-logo'),
+      group: attr('group-title') || '未分组',
+      url: ''
+    };
+  }
+
+  /* ===== 加载播放列表 ===== */
+  function loadPlaylistFromUrl(url) {
+    if (!url) return;
+    setStatus('正在加载播放列表...', 'status-loading');
+    loadBtn.disabled = true;
+    fetch(proxyUrl(url))
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.text();
+      })
+      .then(function(text) {
+        var channels = parseM3U(text);
+        if (channels.length === 0) throw new Error('未解析到任何频道');
+        allChannels = channels;
+        buildGroupSelect();
+        renderChannelList();
+        setStatus('已加载 ' + channels.length + ' 个频道', 'status-ok');
+        try { localStorage.setItem('iptv-playlist-url', url); } catch(e) {}
+        setActiveBuiltinBtn(url);
+      })
+      .catch(function(err) {
+        setStatus('加载失败: ' + err.message, 'status-error');
+      })
+      .finally(function() { loadBtn.disabled = false; });
+  }
+
+  function loadPlaylistFromFile(file) {
+    setStatus('正在读取文件...', 'status-loading');
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var channels = parseM3U(e.target.result);
+      if (channels.length === 0) {
+        setStatus('文件中未解析到频道', 'status-error');
+        return;
+      }
+      allChannels = channels;
+      buildGroupSelect();
+      renderChannelList();
+      setStatus('已从文件加载 ' + channels.length + ' 个频道', 'status-ok');
+      setActiveBuiltinBtn('');
+    };
+    reader.onerror = function() { setStatus('读取文件失败', 'status-error'); };
+    reader.readAsText(file);
+  }
+
+  /* ===== 分组与渲染 ===== */
+  function buildGroupSelect() {
+    var groupSet = {};
+    for (var i = 0; i < allChannels.length; i++) {
+      var g = allChannels[i].group || '未分组';
+      groupSet[g] = (groupSet[g] || 0) + 1;
+    }
+    var groups = Object.keys(groupSet).sort();
+    groupSelect.innerHTML = '<option value="">全部分组 (' + allChannels.length + ')</option>';
+    for (var j = 0; j < groups.length; j++) {
+      var opt = document.createElement('option');
+      opt.value = groups[j];
+      opt.textContent = groups[j] + ' (' + groupSet[groups[j]] + ')';
+      groupSelect.appendChild(opt);
+    }
+  }
+
+  function getFilteredChannels() {
+    var keyword = searchInput.value.trim().toLowerCase();
+    var group = groupSelect.value;
+    return allChannels.filter(function(ch) {
+      if (group && (ch.group || '未分组') !== group) return false;
+      if (keyword && ch.name.toLowerCase().indexOf(keyword) === -1) return false;
+      return true;
+    });
+  }
+
+  function renderChannelList() {
+    var list = getFilteredChannels();
+    channelCount.textContent = '共 ' + list.length + ' / ' + allChannels.length + ' 个频道';
+    channelList.innerHTML = '';
+    if (list.length === 0) {
+      var tip = document.createElement('li');
+      tip.className = 'empty-tip';
+      tip.textContent = allChannels.length === 0 ? '请先加载播放列表' : '无匹配频道';
+      channelList.appendChild(tip);
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < list.length; i++) {
+      (function(ch) {
+        var li = document.createElement('li');
+        li.className = 'channel-item' + (currentChannel && currentChannel.url === ch.url ? ' active' : '');
+        li.setAttribute('data-url', ch.url);
+
+        // logo（有图用img，无图用首字母占位）
+        var logoEl;
+        if (ch.logo) {
+          logoEl = document.createElement('img');
+          logoEl.className = 'channel-logo';
+          logoEl.loading = 'lazy';
+          logoEl.alt = '';
+          logoEl.src = ch.logo;
+          logoEl.onerror = function() {
+            var fb = document.createElement('span');
+            fb.className = 'channel-logo';
+            fb.textContent = ch.name.charAt(0) || '?';
+            logoEl.replaceWith(fb);
+          };
+        } else {
+          logoEl = document.createElement('span');
+          logoEl.className = 'channel-logo';
+          logoEl.textContent = ch.name.charAt(0) || '?';
+        }
+        li.appendChild(logoEl);
+
+        // 频道信息
+        var info = document.createElement('div');
+        info.className = 'channel-info';
+        var nm = document.createElement('div');
+        nm.className = 'channel-name';
+        nm.textContent = ch.name;
+        var gp = document.createElement('div');
+        gp.className = 'channel-group';
+        gp.textContent = ch.group || '未分组';
+        info.appendChild(nm);
+        info.appendChild(gp);
+        li.appendChild(info);
+
+        li.addEventListener('click', function() { playChannel(ch); });
+        frag.appendChild(li);
+      })(list[i]);
+    }
+    channelList.appendChild(frag);
+  }
+
+  /* ===== 播放 ===== */
+  function destroyHls() {
+    if (hls) { try { hls.destroy(); } catch(e) {} hls = null; }
+  }
+
+  function playChannel(ch) {
+    currentChannel = ch;
+    destroyHls();
+    var streamUrl = proxyUrl(ch.url);
+    showChannelName(ch.name);
+    setStatus('正在连接: ' + ch.name, 'status-loading');
+    statusUrl.textContent = ch.url;
+
+    if (window.Hls && Hls.isSupported()) {
+      hls = new Hls({
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        maxBufferLength: 30,
+        manifestLoadingTimeOut: 10000,
+        manifestLoadingMaxRetry: 2,
+        levelLoadingTimeOut: 10000,
+        fragLoadingTimeOut: 20000
+      });
+      hls.loadSource(streamUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        setStatus('正在播放: ' + ch.name, 'status-ok');
+        video.play().catch(function() {});
+      });
+      hls.on(Hls.Events.ERROR, function(evt, data) {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          setStatus('网络错误，尝试恢复: ' + data.details, 'status-error');
+          hls.startLoad();
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          setStatus('媒体错误，尝试恢复: ' + data.details, 'status-error');
+          hls.recoverMediaError();
+        } else {
+          setStatus('播放失败: ' + data.details, 'status-error');
+          destroyHls();
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari 原生 HLS
+      video.src = streamUrl;
+      video.play().catch(function() {});
+      setStatus('正在播放: ' + ch.name, 'status-ok');
+    } else {
+      setStatus(window.Hls ? '当前浏览器不支持 HLS 播放' : 'hls.js 加载失败，请确认本地 hls.min.js 存在或网络可用', 'status-error');
+    }
+    // 更新高亮（仅切换 active 类，不重建列表，避免大量频道时卡顿）
+    var items = channelList.querySelectorAll('.channel-item');
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle('active', items[i].getAttribute('data-url') === ch.url);
+    }
+  }
+
+  /* ===== 事件绑定 ===== */
+  toggleSidebar.addEventListener('click', function() {
+    sidebar.classList.add('collapsed');
+  });
+  toggleFloat.addEventListener('click', function() {
+    sidebar.classList.remove('collapsed');
+  });
+  loadBtn.addEventListener('click', function() {
+    loadPlaylistFromUrl(urlInput.value.trim());
+  });
+  urlInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') loadPlaylistFromUrl(urlInput.value.trim());
+  });
+  fileInput.addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (file) loadPlaylistFromFile(file);
+    fileInput.value = '';
+  });
+  searchInput.addEventListener('input', renderChannelList);
+  groupSelect.addEventListener('change', renderChannelList);
+
+  /* ===== 内置播放列表 ===== */
+  function renderBuiltinPlaylists() {
+    if (!builtinPlaylists.length) return;
+    builtinWrap.hidden = false;
+    builtinWrap.innerHTML = '';
+    var title = document.createElement('div');
+    title.className = 'builtin-title';
+    title.textContent = '内置播放列表';
+    var list = document.createElement('div');
+    list.className = 'builtin-list';
+    builtinPlaylists.forEach(function(p) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'builtin-btn';
+      btn.textContent = p.name;
+      btn.setAttribute('data-url', p.url);
+      btn.addEventListener('click', function() {
+        urlInput.value = p.url;
+        loadPlaylistFromUrl(p.url);
+      });
+      list.appendChild(btn);
+    });
+    builtinWrap.appendChild(title);
+    builtinWrap.appendChild(list);
+  }
+
+  // 高亮当前已加载的内置播放列表按钮（URL不匹配时取消全部高亮）
+  function setActiveBuiltinBtn(url) {
+    var btns = builtinWrap.querySelectorAll('.builtin-btn');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-url') === url);
+    }
+  }
+
+  /* ===== 初始化 ===== */
+  function initStartup() {
+    var savedUrl = '';
+    try { savedUrl = localStorage.getItem('iptv-playlist-url') || ''; } catch(e) {}
+    // 内置列表非空时第一项作为默认加载项，否则回退到 DEFAULT_PLAYLIST
+    var defaultUrl = builtinPlaylists.length ? builtinPlaylists[0].url : DEFAULT_PLAYLIST;
+    urlInput.value = savedUrl || defaultUrl;
+    loadPlaylistFromUrl(urlInput.value);
+  }
+
+  // 启动时先获取服务端配置（内置播放列表 + 默认播放列表），失败时回退到默认行为
+  fetch('/config')
+    .then(function(resp) { return resp.json(); })
+    .then(function(cfg) {
+      if (cfg && Array.isArray(cfg.playlists) && cfg.playlists.length) {
+        builtinPlaylists = cfg.playlists;
+        renderBuiltinPlaylists();
+      }
+      initStartup();
+    })
+    .catch(function() {
+      initStartup();
+    });
+})();
+</script>
+</body>
+</html>

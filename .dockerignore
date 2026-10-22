@@ -1,0 +1,25 @@
+# 版本控制
+.git
+.gitattributes
+
+# IDE / 工具配置
+.joycode
+.vscode
+.idea
+
+# 依赖（本项目零依赖，但仍排除以防意外）
+node_modules
+npm-debug.log
+
+# CI / 文档
+.github
+README.md
+LICENSE
+
+# Docker 本身
+Dockerfile
+.dockerignore
+
+# 系统文件
+.DS_Store
+Thumbs.db
