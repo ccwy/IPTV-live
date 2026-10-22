@@ -418,11 +418,20 @@ function createTranscodeSession(targetUrl) {
     refererHeaders = 'Referer: ' + new URL(targetUrl).origin + '/\r\n';
   } catch (e) {}
 
-  const args = ['-hide_banner', '-loglevel', 'error', '-user_agent', 'APTV/1.0'];
+  const args = ['-hide_banner', '-loglevel', 'warning', '-user_agent', 'APTV/1.0'];
   if (refererHeaders) args.push('-headers', refererHeaders);
   args.push(
+    // HTTP 拉流稳定性：断线自动重连 + 10s 连接超时（微秒），防止 ffmpeg 无限挂起
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-rw_timeout', '10000000',
     '-i', targetUrl,
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+    // 码率限制：4K H.265 转 H.264 不限码率会爆 CPU，限制到 2.5M 码率足够清晰且 NAS 可承受
+    '-b:v', '2000k',
+    '-maxrate', '2500k',
+    '-bufsize', '4000k',
     '-c:a', 'aac', '-b:a', '128k',
     '-f', 'hls',
     '-hls_time', '2',
@@ -436,10 +445,11 @@ function createTranscodeSession(targetUrl) {
   const session = { dir: sessionDir, process: proc, lastAccess: Date.now(), url: targetUrl };
   transcodeSessions.set(sessionId, session);
 
-  // 消费 stderr 防止缓冲写满阻塞，保留末尾内容用于异常退出时排查
+  // 消费 stderr 防止缓冲写满阻塞，保留末尾内容用于异常退出时排查（同步到 session 供 handleTranscode 读取）
   let stderrTail = '';
   proc.stderr.on('data', (d) => {
-    stderrTail = (stderrTail + d.toString()).slice(-512);
+    stderrTail = (stderrTail + d.toString()).slice(-1024);
+    session.stderrTail = stderrTail;
   });
   proc.on('error', (err) => {
     console.warn('[转码] 启动 ffmpeg 失败: ' + err.message);
@@ -526,17 +536,17 @@ function handleTranscode(req, res) {
   // 等待 ffmpeg 生成 index.m3u8（新会话需等待转码启动，复用会话文件已存在）
   const m3u8Path = path.join(session.dir, 'index.m3u8');
   const waitStart = Date.now();
-  const WAIT_TIMEOUT = 15000;
+  const WAIT_TIMEOUT = 30000;
 
   function tryReadM3U8() {
     if (!transcodeSessions.has(sessionId)) {
-      return sendJSON(res, 502, { error: '转码进程已退出，无法生成播放列表（请检查频道源是否可用）' });
+      return sendJSON(res, 502, { error: '转码进程已退出: ' + (session.stderrTail || '').trim().split('\n').pop() });
     }
     fs.readFile(m3u8Path, 'utf-8', (err, data) => {
       if (err) {
         if (Date.now() - waitStart > WAIT_TIMEOUT) {
           cleanupTranscodeSession(sessionId);
-          return sendJSON(res, 502, { error: '转码启动超时（15s 内未生成播放列表），请检查频道源是否可用' });
+          return sendJSON(res, 502, { error: '转码启动超时（30s 内未生成播放列表），请检查频道源是否可用' });
         }
         return setTimeout(tryReadM3U8, 200);
       }
