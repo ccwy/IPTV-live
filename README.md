@@ -14,6 +14,7 @@
 - 多播放列表支持：侧边栏显示当前播放列表名称，频道计数区实时体现（列表名 · 共 X / Y 个频道）
 - 自建直播控制条：播放/暂停按钮、静音/音量调节、LIVE 徽章、画面比例切换（适应/铺满/拉伸）、全屏，鼠标移出自动隐藏
 - 代理增强：自动跟随重定向（最多5次）、转发 Referer/Cookie 防盗链、支持自签名 HTTPS 证书、60秒超时、非 UTF-8 编码容错
+- HEVC/H.265 自动转码：浏览器不支持的编码通过服务端 ffmpeg 实时转码为 H.264 播放（需 `ENABLE_TRANSCODE=true`）
 - 深色主题，响应式布局，移动端适配（侧边栏覆盖式布局、小屏自动收起）
 
 ## 快速开始
@@ -100,6 +101,7 @@ services:
       # 内置播放列表（JSON 数组，每项含 name 和 url）
       PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]'
       # PORT: "8080"                 # 容器内端口，默认 8080；修改时需同步端口映射右侧
+      ENABLE_TRANSCODE: "true"       # H.265/HEVC 转码，默认启用；性能不足时可设为 false
     restart: unless-stopped
     network_mode: bridge             # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
 ```
@@ -146,6 +148,28 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 - `PLAYLISTS` 格式非法时不会导致服务崩溃，仅在日志输出警告并忽略
 - 内置列表的第一项作为默认加载项；用户上次使用的 URL 仍会被记住（localStorage）
 
+### 转码配置（HEVC/H.265）
+
+部分直播源采用 H.265/HEVC 编码，大多数浏览器（Chrome/Edge/Firefox）无法通过 MSE 直接播放。启用转码后，服务端调用 ffmpeg 将 HEVC 实时转码为 H.264 + AAC，再以 HLS 形式供浏览器播放，前端遇到编码错误时自动切换到转码端点，无需手动干预。
+
+环境变量 `ENABLE_TRANSCODE`：
+
+- **Docker 镜像**：已内置 ffmpeg，默认 `true`（启用）
+- **源码运行**：需自行安装 ffmpeg 并设置 `ENABLE_TRANSCODE=true`
+- 值为 `true` / `1` / `yes` 时启用，其他值均为禁用
+
+```bash
+# 源码运行示例（需先安装 ffmpeg）
+set ENABLE_TRANSCODE=true && node js/server.js
+```
+
+```bash
+# Docker 运行时关闭转码（性能不足的设备）
+docker run -d -p 8883:8080 -e ENABLE_TRANSCODE=false iptv-live:latest
+```
+
+> **注意**：实时转码消耗 CPU，无硬件加速的 NAS 建议仅对 720p 以下分辨率的源启用；性能不足导致播放卡顿时，可在 docker-compose.yml 中将 `ENABLE_TRANSCODE` 设为 `false` 关闭。转码会话空闲 5 分钟后自动清理（kill ffmpeg 进程并删除临时分片）。
+
 ## 使用方法
 
 1. 页面打开后自动加载默认播放列表
@@ -164,6 +188,7 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
   - HTTPS 放宽证书校验（rejectUnauthorized=false），兼容自签名证书源
   - 连接超时 60 秒，慢速源友好
   - 非 UTF-8 编码的 M3U8 检测到乱码时放弃重写、透传原始内容
+- **转码**：`/transcode?url=<encodeURIComponent(目标URL)>` 端点，ffmpeg 实时转码 HEVC→H.264+AAC 并输出 HLS 分片，`/transcode-seg/` 提供分片访问，会话空闲 5 分钟自动清理
 
 ## 项目结构
 

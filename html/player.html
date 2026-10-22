@@ -227,10 +227,17 @@ body {
   var allChannels = [];
   var currentChannel = null;
   var hls = null;
+  var nativeFallback = false;
+  var nativeErrorHandler = null;
+  var mediaErrorRetries = 0;
+  var networkErrorRetries = 0;
   var overlayTimer = null;
   var statusTimer = null;
   var builtinPlaylists = [];
   var currentPlaylistName = '';
+  // 转码状态（启动时从 /transcode-status 获取，用于 HEVC 不支持时自动切换转码端点）
+  var transcodeStatus = { enabled: false, ffmpegAvailable: false };
+  var transcodeTried = false; // 同一频道仅尝试一次转码，切台时重置，防止无限循环
 
   /* ===== 工具函数 ===== */
   function proxyUrl(u) {
@@ -475,6 +482,11 @@ body {
   function playChannel(ch) {
     currentChannel = ch;
     destroyHls();
+    nativeFallback = false;
+    mediaErrorRetries = 0;
+    networkErrorRetries = 0;
+    transcodeTried = false; // 切台时重置，允许新频道再次尝试转码
+    if (nativeErrorHandler) { video.removeEventListener('error', nativeErrorHandler); nativeErrorHandler = null; }
     var streamUrl = proxyUrl(ch.url);
     showChannelName(ch.name);
     setStatus('正在连接: ' + ch.name, 'status-loading');
@@ -498,10 +510,68 @@ body {
       hls.on(Hls.Events.ERROR, function(evt, data) {
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          setStatus('网络错误，尝试恢复: ' + data.details, 'status-error');
+          if (networkErrorRetries >= 5) {
+            destroyHls();
+            setStatus('网络错误，无法连接频道源', 'status-error');
+            return;
+          }
+          networkErrorRetries++;
+          setStatus('网络错误，尝试恢复(' + networkErrorRetries + '/5): ' + data.details, 'status-error');
           hls.startLoad();
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          setStatus('媒体错误，尝试恢复: ' + data.details, 'status-error');
+          if (data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR) {
+            /* 浏览器 MSE 不支持该编码（常见为 H.265/HEVC），recoverMediaError 无效。
+               优先尝试服务端转码（HEVC→H.264），不可用或已尝试过则回退原生播放。
+               currentChannel.url 为未走代理的原始频道 URL，直接传给 /transcode 由 ffmpeg 拉流 */
+            if (transcodeStatus.enabled && transcodeStatus.ffmpegAvailable && !transcodeTried && currentChannel) {
+              transcodeTried = true; // 同一频道仅尝试一次，防止转码失败后无限循环
+              destroyHls();
+              var transcodeUrl = '/transcode?url=' + encodeURIComponent(currentChannel.url);
+              setStatus('编码不支持，正在转码播放...', 'status-loading');
+              hls = new Hls({
+                liveSyncDurationCount: 1,
+                liveMaxLatencyDurationCount: 3,
+                maxBufferLength: 10,
+                manifestLoadingTimeOut: 15000,
+                manifestLoadingMaxRetry: 3,
+                levelLoadingTimeOut: 15000,
+                fragLoadingTimeOut: 30000
+              });
+              hls.loadSource(transcodeUrl);
+              hls.attachMedia(video);
+              hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                setStatus('正在播放(转码): ' + currentChannel.name, 'status-ok');
+                video.play().catch(function() {});
+              });
+              hls.on(Hls.Events.ERROR, function(evt2, data2) {
+                if (!data2.fatal) return;
+                destroyHls();
+                setStatus('转码播放失败，该频道可能无法播放', 'status-error');
+              });
+              return;
+            }
+            /* 转码不可用或已尝试过：回退原生播放（Safari 等可能原生支持 HEVC） */
+            destroyHls();
+            nativeFallback = true;
+            setStatus('编码可能不受支持，尝试原生播放...', 'status-loading');
+            nativeErrorHandler = function onNativeError() {
+              video.removeEventListener('error', nativeErrorHandler);
+              nativeErrorHandler = null;
+              nativeFallback = false;
+              setStatus('该频道编码浏览器不支持（可能为H.265/HEVC），建议用Safari或VLC播放', 'status-error');
+            };
+            video.addEventListener('error', nativeErrorHandler);
+            video.src = streamUrl;
+            video.play().catch(function() {});
+            return;
+          }
+          if (mediaErrorRetries >= 3) {
+            destroyHls();
+            setStatus('媒体错误，无法恢复', 'status-error');
+            return;
+          }
+          mediaErrorRetries++;
+          setStatus('媒体错误，尝试恢复(' + mediaErrorRetries + '/3): ' + data.details, 'status-error');
           hls.recoverMediaError();
         } else {
           setStatus('播放失败: ' + data.details, 'status-error');
@@ -694,6 +764,12 @@ body {
     // savedUrl 匹配内置播放列表时传入对应名称，确保频道计数区显示播放列表名
     loadPlaylistFromUrl(urlInput.value, matchBuiltinName(urlInput.value));
   }
+
+  // 启动时查询转码功能状态（HEVC 不支持时自动切换转码端点的依据，失败时保持默认不可用）
+  fetch('/transcode-status')
+    .then(function(resp) { return resp.json(); })
+    .then(function(st) { if (st) transcodeStatus = st; })
+    .catch(function() {});
 
   // 启动时先获取服务端配置（内置播放列表 + 默认播放列表），失败时回退到默认行为
   fetch('/config')
