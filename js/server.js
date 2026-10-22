@@ -193,18 +193,59 @@ function handleProxy(req, res) {
     return sendJSON(res, 400, { error: '仅支持 http/https 协议' });
   }
 
-  const lib = target.protocol === 'https:' ? https : http;
+  // 构造基础转发头（含 referer/cookie），具体请求头在 fetchUpstream 中按目标重建
+  const baseHeaders = buildForwardHeaders(req);
+  fetchUpstream(req, res, targetUrl, 0, baseHeaders);
+}
 
-  // 构造转发请求头
+/**
+ * 构造转发请求头：复制必要头（含 referer/cookie），固定使用 APTV 播放器 UA
+ */
+function buildForwardHeaders(req) {
   const forwardHeaders = {};
-  const copyHeaders = ['range', 'user-agent', 'accept', 'accept-language'];
+  const copyHeaders = ['range', 'accept', 'accept-language', 'referer', 'cookie'];
   for (const h of copyHeaders) {
     if (req.headers[h]) forwardHeaders[h] = req.headers[h];
   }
-  if (!forwardHeaders['user-agent']) {
-    forwardHeaders['user-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+  // 固定 APTV（Apple TV 播放器）UA：部分直播源仅允许特定播放器 UA 访问
+  forwardHeaders['user-agent'] = 'APTV/1.0';
+  return forwardHeaders;
+}
+
+/**
+ * 递归请求上游：跟随 301/302/303/307/308 重定向，最多 5 次
+ */
+function fetchUpstream(req, res, targetUrl, depth, baseHeaders) {
+  if (depth > 5) {
+    return sendJSON(res, 502, { error: '重定向次数过多', url: targetUrl });
   }
+
+  let target;
+  try {
+    target = new URL(targetUrl);
+  } catch (e) {
+    return sendJSON(res, 400, { error: '无效的重定向URL: ' + targetUrl });
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    return sendJSON(res, 400, { error: '重定向目标仅支持 http/https 协议' });
+  }
+
+  const lib = target.protocol === 'https:' ? https : http;
+
+  // 每次请求基于当前目标重建头（host/referer 随重定向更新）
+  const forwardHeaders = Object.assign({}, baseHeaders);
   forwardHeaders['host'] = target.host;
+  // referer 改写：本站地址（localhost/本机IP）改写为目标源同域 referer，避免源服务器校验失败返回 403
+  if (forwardHeaders['referer']) {
+    try {
+      const refHost = new URL(forwardHeaders['referer']).hostname;
+      const isLocal = refHost === 'localhost' || refHost === '127.0.0.1' || refHost === '0.0.0.0' || refHost === '::1'
+        || /^192\.168\./.test(refHost) || /^10\./.test(refHost) || /^172\.(1[6-9]|2\d|3[01])\./.test(refHost);
+      if (isLocal) forwardHeaders['referer'] = target.origin + '/';
+    } catch (e) {
+      delete forwardHeaders['referer'];
+    }
+  }
   forwardHeaders['accept-encoding'] = 'identity'; // 避免目标返回压缩内容导致解码失败
 
   const options = {
@@ -213,12 +254,32 @@ function handleProxy(req, res) {
     path: target.pathname + target.search,
     method: 'GET', // 代理只做GET
     headers: forwardHeaders,
-    timeout: 30000,
+    timeout: 60000, // 慢速源容易超时，延长到 60s
   };
+  if (target.protocol === 'https:') {
+    options.rejectUnauthorized = false; // 放宽自签名证书校验，部分小众源自签名
+  }
 
   const proxyReq = lib.request(options, (proxyRes) => {
     const contentType = proxyRes.headers['content-type'] || '';
     const statusCode = proxyRes.statusCode || 502;
+
+    // 跟随重定向：读取 Location 头拼接新地址后递归请求，最多 5 次（防死循环）
+    if (statusCode === 301 || statusCode === 302 || statusCode === 303
+      || statusCode === 307 || statusCode === 308) {
+      const location = proxyRes.headers['location'];
+      proxyRes.resume(); // 丢弃重定向响应体，不转发 body
+      if (!location) {
+        return sendJSON(res, 502, { error: '重定向响应缺少 Location 头', url: targetUrl });
+      }
+      let nextUrl;
+      try {
+        nextUrl = new URL(location, targetUrl).href; // Location 可能是相对路径
+      } catch (e) {
+        return sendJSON(res, 502, { error: '无效的重定向地址: ' + location });
+      }
+      return fetchUpstream(req, res, nextUrl, depth + 1, baseHeaders);
+    }
 
     // 判断是否需要重写m3u8内容（Content-Type或URL后缀）
     const urlPath = target.pathname.toLowerCase();
@@ -231,7 +292,18 @@ function handleProxy(req, res) {
       const chunks = [];
       proxyRes.on('data', (chunk) => chunks.push(chunk));
       proxyRes.on('end', () => {
-        let body = Buffer.concat(chunks).toString('utf-8');
+        const rawBuf = Buffer.concat(chunks);
+        const decoded = rawBuf.toString('utf-8');
+        // 编码容错：UTF-8 解码出现替换符 U+FFFD 说明源内容非 UTF-8，
+        // 放弃重写直接透传原始 Buffer（不重写比写坏好）
+        if (decoded.indexOf(String.fromCodePoint(0xFFFD)) !== -1) {
+          setCorsHeaders(res);
+          res.setHeader('Content-Type', contentType || 'application/vnd.apple.mpegurl');
+          res.setHeader('Content-Length', rawBuf.length);
+          res.writeHead(statusCode === 304 ? 200 : statusCode);
+          return res.end(rawBuf);
+        }
+        let body = decoded;
         const isActuallyM3U8 = looksLikeM3U8(body);
         if (isActuallyM3U8) {
           body = rewriteM3U8(body, targetUrl);
@@ -269,7 +341,7 @@ function handleProxy(req, res) {
 
   proxyReq.on('timeout', () => {
     proxyReq.destroy();
-    sendJSON(res, 504, { error: '连接目标服务器超时(30s): ' + targetUrl });
+    sendJSON(res, 504, { error: '连接目标服务器超时(60s): ' + targetUrl });
   });
 
   proxyReq.on('error', (err) => {

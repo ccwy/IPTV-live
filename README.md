@@ -11,7 +11,10 @@
 - 频道搜索、分组筛选、频道 logo 显示
 - 支持自定义播放列表 URL 和本地文件上传
 - 记住上次使用的播放列表 URL（localStorage）
-- 深色主题，响应式布局，移动端适配
+- 多播放列表支持：侧边栏显示当前播放列表名称，频道计数区实时体现（列表名 · 共 X / Y 个频道）
+- 自建直播控制条：播放/暂停按钮、静音/音量调节、LIVE 徽章、画面比例切换（适应/铺满/拉伸）、全屏，鼠标移出自动隐藏
+- 代理增强：自动跟随重定向（最多5次）、转发 Referer/Cookie 防盗链、支持自签名 HTTPS 证书、60秒超时、非 UTF-8 编码容错
+- 深色主题，响应式布局，移动端适配（侧边栏覆盖式布局、小屏自动收起）
 
 ## 快速开始
 
@@ -154,8 +157,13 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 ## 技术栈
 
 - **后端**：Node.js 内置模块（http / https / url / fs / path），零外部依赖
-- **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（本地引入）
+- **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（本地引入）；自建直播控制条（播放/暂停、音量、画面比例、全屏），无第三方 UI 库
 - **代理**：`/proxy?url=<encodeURIComponent(目标URL)>` 端点，流式转发 + M3U8 内容重写
+  - 自动跟随 301/302/303/307/308 重定向（最多 5 次跳转，支持相对路径 Location）
+  - 转发 Referer/Cookie 头，本站地址自动改写为目标同域，规避防盗链 403
+  - HTTPS 放宽证书校验（rejectUnauthorized=false），兼容自签名证书源
+  - 连接超时 60 秒，慢速源友好
+  - 非 UTF-8 编码的 M3U8 检测到乱码时放弃重写、透传原始内容
 
 ## 项目结构
 
