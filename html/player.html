@@ -102,7 +102,7 @@ body {
 }
 #sidebar-toggle-float:hover { background: #e94560; }
 #player-area { flex: 1; background: #000; position: relative; overflow: hidden; }
-#video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
+#video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
 #channel-name-overlay {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   background: rgba(0,0,0,.65); color: #fff; padding: 6px 18px; border-radius: 20px;
@@ -111,6 +111,27 @@ body {
   text-overflow: ellipsis;
 }
 #channel-name-overlay.show { opacity: 1; }
+/* ===== 自建直播控制条 ===== */
+#player-controls {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(4px);
+  z-index: 15; transition: opacity .3s;
+}
+#player-controls.hidden-controls { opacity: 0; pointer-events: none; }
+#player-controls button {
+  background: none; border: none; color: #fff; cursor: pointer;
+  font-size: clamp(14px, 2vw, 18px); padding: 4px 6px; line-height: 1;
+  transition: color .2s;
+}
+#player-controls button:hover { color: #e94560; }
+#volume-slider { width: clamp(60px, 10vw, 100px); accent-color: #e94560; cursor: pointer; }
+#live-badge {
+  margin-left: auto; background: #e94560; color: #fff;
+  font-size: clamp(9px, 1.2vw, 11px); padding: 2px 8px; border-radius: 10px;
+  font-weight: 600; letter-spacing: 1px; user-select: none; white-space: nowrap;
+}
+#btn-aspect { margin-left: auto; font-size: clamp(11px, 1.6vw, 13px); }
 .status-loading { color: #e94560; }
 .status-error { color: #ff6b6b; }
 .status-ok { color: #51cf66; }
@@ -167,8 +188,16 @@ body {
 <main id="main">
   <button id="sidebar-toggle-float" title="展开侧边栏">☰</button>
   <div id="player-area">
-    <video id="video" controls autoplay playsinline></video>
+    <video id="video" autoplay muted playsinline></video>
     <div id="channel-name-overlay"></div>
+    <div id="player-controls">
+      <button id="btn-play" title="播放/暂停">▶</button>
+      <button id="btn-mute" title="静音/取消静音">🔊</button>
+      <input type="range" id="volume-slider" min="0" max="100" value="100" title="音量">
+      <span id="live-badge">LIVE</span>
+      <button id="btn-aspect" title="画面比例">铺满</button>
+      <button id="btn-fullscreen" title="全屏">⛶</button>
+    </div>
   </div>
 </main>
 
@@ -521,6 +550,105 @@ body {
   });
   searchInput.addEventListener('input', renderChannelList);
   groupSelect.addEventListener('change', renderChannelList);
+
+  /* ===== 自建直播控制条 ===== */
+  var playerArea = document.getElementById('player-area');
+  var playerControls = document.getElementById('player-controls');
+  var btnPlay = document.getElementById('btn-play');
+  var btnMute = document.getElementById('btn-mute');
+  var volumeSlider = document.getElementById('volume-slider');
+  var btnAspect = document.getElementById('btn-aspect');
+  var btnFullscreen = document.getElementById('btn-fullscreen');
+
+  // 控制条自动隐藏：鼠标离开播放区域 3 秒后隐藏，暂停时始终显示
+  var hideControlsTimer = null;
+  function hideControls() { playerControls.classList.add('hidden-controls'); }
+  function showControls() { playerControls.classList.remove('hidden-controls'); }
+  function scheduleHide() {
+    if (hideControlsTimer) clearTimeout(hideControlsTimer);
+    hideControlsTimer = setTimeout(function() {
+      if (!video.paused) hideControls();
+    }, 3000);
+  }
+  function showControlsAuto() { showControls(); scheduleHide(); }
+
+  // 播放/暂停：仅按钮触发，点击视频画面不触发任何播放控制
+  btnPlay.addEventListener('click', function() {
+    if (video.paused) { video.play().catch(function() {}); }
+    else { video.pause(); }
+  });
+  video.addEventListener('play', function() { btnPlay.textContent = '⏸'; scheduleHide(); });
+  video.addEventListener('pause', function() {
+    btnPlay.textContent = '▶';
+    showControls();
+    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null; }
+  });
+
+  // 静音/音量
+  btnMute.addEventListener('click', function() { video.muted = !video.muted; });
+  volumeSlider.addEventListener('input', function() {
+    video.volume = volumeSlider.value / 100;
+    if (video.volume === 0) { video.muted = true; }
+    else if (video.muted) { video.muted = false; }
+  });
+  video.addEventListener('volumechange', function() {
+    volumeSlider.value = Math.round(video.volume * 100);
+    btnMute.textContent = (video.muted || video.volume === 0) ? '🔇' : '🔊';
+  });
+  // 初始：muted 配合自动播放策略，slider 显示 100（取消静音即有声音）
+  video.muted = true;
+  volumeSlider.value = 100;
+  btnMute.textContent = '🔇';
+
+  // 画面比例三态循环：适应(contain) → 铺满(cover) → 拉伸(fill)
+  var aspectModes = [
+    { name: '适应', value: 'contain' },
+    { name: '铺满', value: 'cover' },
+    { name: '拉伸', value: 'fill' }
+  ];
+  var aspectIndex = 1; // 默认铺满(cover)
+  function applyAspect() {
+    video.style.objectFit = aspectModes[aspectIndex].value;
+    btnAspect.textContent = aspectModes[aspectIndex].name;
+  }
+  applyAspect();
+  btnAspect.addEventListener('click', function() {
+    aspectIndex = (aspectIndex + 1) % aspectModes.length;
+    applyAspect();
+  });
+
+  // 全屏（兼容 Safari webkit 前缀）
+  btnFullscreen.addEventListener('click', function() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      if (document.exitFullscreen) document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } else if (playerArea.requestFullscreen) {
+      playerArea.requestFullscreen();
+    } else if (playerArea.webkitRequestFullscreen) {
+      playerArea.webkitRequestFullscreen();
+    }
+  });
+  function onFullscreenChange() {
+    var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    btnFullscreen.textContent = isFs ? '⤢' : '⛶';
+  }
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+  // 鼠标进入/移动播放区域显示控制条，移出后 3 秒隐藏
+  playerArea.addEventListener('mouseenter', showControlsAuto);
+  playerArea.addEventListener('mousemove', showControlsAuto);
+  playerArea.addEventListener('mouseleave', function() {
+    if (hideControlsTimer) clearTimeout(hideControlsTimer);
+    if (!video.paused) hideControls();
+  });
+  // 鼠标悬停在控制条上时保持显示
+  playerControls.addEventListener('mouseenter', function() {
+    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null; }
+  });
+  playerControls.addEventListener('mouseleave', scheduleHide);
+  // 移动端：触摸播放区域显示控制条，3 秒无操作隐藏
+  playerArea.addEventListener('touchstart', showControlsAuto, { passive: true });
 
   /* ===== 内置播放列表 ===== */
   function renderBuiltinPlaylists() {
