@@ -16,7 +16,7 @@
 ## 快速开始
 
 ```bash
-node server.js
+node js/server.js
 ```
 
 浏览器访问 http://localhost:8883 即可观看。
@@ -24,7 +24,7 @@ node server.js
 自定义端口：
 
 ```bash
-set PORT=3000 && node server.js
+set PORT=3000 && node js/server.js
 ```
 
 ## Docker
@@ -32,7 +32,7 @@ set PORT=3000 && node server.js
 ### 本地构建运行
 
 ```bash
-docker build -t iptv-live .
+docker build -t iptv-live -f docker/Dockerfile .
 docker run -d -p 8883:8080 iptv-live
 ```
 
@@ -76,7 +76,7 @@ docker run -d -p 3000:3000 -e PORT=3000 iptv-live:latest
 
 **方式二：SSH 命令行**
 
-将 [docker-compose.yml](docker-compose.yml) 上传到 NAS 任意目录（如 `/volume1/docker/iptv-live/`），在该目录执行：
+将 [docker-compose.yml](docker/docker-compose.yml) 上传到 NAS 任意目录（如 `/volume1/docker/iptv-live/`），在该目录执行：
 
 ```bash
 docker compose up -d
@@ -154,19 +154,25 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 ## 技术栈
 
 - **后端**：Node.js 内置模块（http / https / url / fs / path），零外部依赖
-- **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（CDN 引入）
+- **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（本地引入）
 - **代理**：`/proxy?url=<encodeURIComponent(目标URL)>` 端点，流式转发 + M3U8 内容重写
 
 ## 项目结构
 
 ```
-├── server.js    # 代理服务器（CORS代理 + M3U8重写 + 静态文件服务）
-├── player.html  # 前端播放页面（单文件）
-├── hls.min.js   # 本地 hls.js 库
-├── Dockerfile   # Docker 镜像构建文件
-├── docker-compose.yml  # 群晖 Docker Compose 部署配置
+├── js/
+│   ├── server.js    # 代理服务器（CORS代理 + M3U8重写 + 静态文件服务）
+│   └── hls.min.js   # 本地 hls.js 库
+├── html/
+│   └── player.html  # 前端播放页面（单文件）
+├── img/
+│   └── favicon.ico  # 网站图标
+├── docker/
+│   ├── Dockerfile   # Docker 镜像构建文件
+│   └── docker-compose.yml  # 群晖 Docker Compose 部署配置
+├── .github/workflows/
+│   └── docker-build.yml  # CI 自动构建多平台镜像并发布到 GitHub Release
 ├── .dockerignore
-├── .github/workflows/docker-build.yml  # CI 自动构建多平台镜像并发布到 GitHub Release
 ├── README.md
 └── LICENSE
 ```

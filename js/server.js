@@ -11,7 +11,7 @@ const path = require('path');
 
 const PORT = process.env.PORT || 8080;
 const DEFAULT_PLAYLIST = 'https://iptv-org.github.io/iptv/index.m3u';
-const ROOT_DIR = __dirname;
+const ROOT_DIR = path.join(__dirname, '..');
 
 // 内置播放列表（环境变量 PLAYLISTS，JSON数组格式：[{"name":"名称","url":"M3U地址"}]）
 // 解析失败时仅输出警告并忽略，不影响服务启动
@@ -296,7 +296,7 @@ function filterHeaders(headers) {
  * 静态文件服务
  */
 function serveStatic(req, res, pathname) {
-  if (pathname === '/') pathname = '/player.html';
+  if (pathname === '/') pathname = '/html/player.html';
 
   // 防止目录遍历
   const safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, '');

@@ -5,10 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="referrer" content="no-referrer">
 <title>IPTV Live</title>
-<link rel="icon" href="data:image/x-icon;,">
-<!-- hls.js：优先加载本地 hls.min.js，失败回退 CDN（jsdelivr），保证离线可用 -->
-<script src="/hls.min.js"></script>
-<script>window.Hls || document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"><\/script>')</script>
+<link rel="icon" href="/img/favicon.ico">
+<!-- hls.js：本地加载，项目不使用任何外部链接 -->
+<script src="/js/hls.min.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -17,11 +16,11 @@ body {
 }
 /* ===== 侧边栏 ===== */
 #sidebar {
-  width: 280px; min-width: 280px; background: #16213e; display: flex; flex-direction: column;
+  width: clamp(220px, 30vw, 280px); min-width: clamp(220px, 30vw, 280px); background: #16213e; display: flex; flex-direction: column;
   border-right: 1px solid #0f3460; transition: margin-left .3s ease, min-width .3s ease, width .3s ease;
   z-index: 10;
 }
-#sidebar.collapsed { margin-left: -280px; }
+#sidebar.collapsed { margin-left: calc(-1 * clamp(220px, 30vw, 280px)); }
 .sidebar-header {
   padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
   border-bottom: 1px solid #0f3460; background: #0f3460;
@@ -40,16 +39,16 @@ body {
 }
 .url-row input:focus { border-color: #e94560; }
 .btn {
-  padding: 8px 14px; background: #e94560; color: #fff; border: none; border-radius: 6px;
-  font-size: 13px; cursor: pointer; white-space: nowrap; transition: background .2s;
+  padding: clamp(4px, 1.5vw, 8px) clamp(8px, 2.5vw, 14px); background: #e94560; color: #fff; border: none; border-radius: 6px;
+  font-size: clamp(11px, 1.8vw, 13px); cursor: pointer; white-space: nowrap; transition: background .2s;
 }
 .btn:hover { background: #c73652; }
 .btn:disabled { background: #555; cursor: not-allowed; }
 .btn-secondary { background: #0f3460; }
 .btn-secondary:hover { background: #1a4a7a; }
 .file-label {
-  display: block; text-align: center; padding: 7px; margin-top: 8px; background: #0f3460;
-  border-radius: 6px; font-size: 12px; color: #a0c0e0; cursor: pointer; transition: background .2s;
+  display: block; text-align: center; padding: clamp(4px, 1.2vw, 7px); margin-top: 8px; background: #0f3460;
+  border-radius: 6px; font-size: clamp(10px, 1.6vw, 12px); color: #a0c0e0; cursor: pointer; transition: background .2s;
 }
 .file-label:hover { background: #1a4a7a; }
 /* 内置播放列表快速选择 */
@@ -57,19 +56,20 @@ body {
 .builtin-playlists .builtin-title { font-size: 12px; color: #7a7a9a; margin-bottom: 6px; }
 .builtin-playlists .builtin-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .builtin-btn {
-  padding: 5px 10px; background: #0f3460; color: #a0c0e0; border: 1px solid #1a4a7a;
-  border-radius: 14px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  padding: clamp(3px, 1vw, 5px) clamp(6px, 2vw, 10px); background: #0f3460; color: #a0c0e0; border: 1px solid #1a4a7a;
+  border-radius: 14px; font-size: clamp(10px, 1.6vw, 12px); cursor: pointer; white-space: nowrap;
   transition: background .2s, color .2s, border-color .2s;
 }
 .builtin-btn:hover { background: #1a4a7a; color: #fff; }
 .builtin-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
 .sidebar-section input[type="text"], .sidebar-section select {
-  width: 100%; padding: 8px 10px; background: #1a1a2e; border: 1px solid #0f3460;
-  border-radius: 6px; color: #e0e0e0; font-size: 13px; outline: none; margin-bottom: 8px;
+  width: 100%; padding: clamp(5px, 1.5vw, 8px) clamp(6px, 2vw, 10px); background: #1a1a2e; border: 1px solid #0f3460;
+  border-radius: 6px; color: #e0e0e0; font-size: clamp(11px, 1.8vw, 13px); outline: none; margin-bottom: 8px;
 }
 .sidebar-section input[type="text"]:focus, .sidebar-section select:focus { border-color: #e94560; }
 .sidebar-section select option { background: #1a1a2e; }
 #channel-count { padding: 8px 12px; font-size: 12px; color: #7a7a9a; border-bottom: 1px solid rgba(15,52,96,.5); }
+#channel-count .playlist-name { color: #a0c0e0; }
 /* ===== 频道列表 ===== */
 #channel-list { flex: 1; overflow-y: auto; list-style: none; }
 #channel-list::-webkit-scrollbar { width: 6px; }
@@ -101,11 +101,8 @@ body {
   cursor: pointer; display: none; backdrop-filter: blur(4px);
 }
 #sidebar-toggle-float:hover { background: #e94560; }
-#player-area {
-  flex: 1; background: #000; position: relative; display: flex; align-items: center;
-  justify-content: center; overflow: hidden;
-}
-#video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+#player-area { flex: 1; background: #000; position: relative; overflow: hidden; }
+#video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
 #channel-name-overlay {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   background: rgba(0,0,0,.65); color: #fff; padding: 6px 18px; border-radius: 20px;
@@ -114,13 +111,6 @@ body {
   text-overflow: ellipsis;
 }
 #channel-name-overlay.show { opacity: 1; }
-#status-bar {
-  padding: 8px 16px; background: #16213e; border-top: 1px solid #0f3460; font-size: 12px;
-  color: #8a8aaa; display: flex; gap: 16px; align-items: center; min-height: 34px;
-}
-#status-text { flex-shrink: 0; }
-#status-url { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  color: #555577; font-size: 11px; }
 .status-loading { color: #e94560; }
 .status-error { color: #ff6b6b; }
 .status-ok { color: #51cf66; }
@@ -129,9 +119,20 @@ body {
   #sidebar {
     position: fixed; left: 0; top: 0; bottom: 0; box-shadow: 4px 0 20px rgba(0,0,0,.5);
   }
-  #sidebar.collapsed { margin-left: -280px; }
+  #sidebar.collapsed { margin-left: calc(-1 * clamp(220px, 30vw, 280px)); }
   #sidebar-toggle-float { display: block; }
   #channel-name-overlay { font-size: 12px; top: 50px; }
+  /* 触摸友好：增大频道项点击区域，缩小缩略图与字体 */
+  .channel-item { padding: 12px 14px; }
+  .channel-logo { width: 36px; height: 36px; min-width: 36px; }
+  .channel-name { font-size: 12px; }
+  /* 按钮进一步缩小 */
+  .btn { padding: 4px 10px; font-size: 12px; }
+  .builtin-btn { padding: 3px 8px; font-size: 11px; }
+  .file-label { padding: 5px; font-size: 11px; }
+  .sidebar-section input[type="text"], .sidebar-section select { padding: 6px 8px; font-size: 12px; }
+  /* 内置播放列表胶囊按钮确保可换行 */
+  .builtin-playlists .builtin-list { flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -169,10 +170,6 @@ body {
     <video id="video" controls autoplay playsinline></video>
     <div id="channel-name-overlay"></div>
   </div>
-  <div id="status-bar">
-    <span id="status-text">就绪</span>
-    <span id="status-url"></span>
-  </div>
 </main>
 
 <script>
@@ -196,15 +193,15 @@ body {
   var channelCount = document.getElementById('channel-count');
   var video = document.getElementById('video');
   var channelNameOverlay = document.getElementById('channel-name-overlay');
-  var statusText = document.getElementById('status-text');
-  var statusUrl = document.getElementById('status-url');
 
   // 状态
   var allChannels = [];
   var currentChannel = null;
   var hls = null;
   var overlayTimer = null;
+  var statusTimer = null;
   var builtinPlaylists = [];
+  var currentPlaylistName = '';
 
   /* ===== 工具函数 ===== */
   function proxyUrl(u) {
@@ -214,9 +211,39 @@ body {
     return PROXY_PREFIX + encodeURIComponent(u);
   }
 
+  // 根据 URL 匹配内置播放列表名称，未匹配返回空字符串
+  function matchBuiltinName(url) {
+    if (!url) return '';
+    for (var i = 0; i < builtinPlaylists.length; i++) {
+      if (builtinPlaylists[i].url === url) return builtinPlaylists[i].name;
+    }
+    return '';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function showChannelCount() {
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    var list = getFilteredChannels();
+    var countText = '共 ' + list.length + ' / ' + allChannels.length + ' 个频道';
+    if (currentPlaylistName) {
+      channelCount.innerHTML = '<span class="playlist-name">' + escapeHtml(currentPlaylistName) + '</span> · ' + countText;
+    } else {
+      channelCount.textContent = countText;
+    }
+    channelCount.className = '';
+  }
+
   function setStatus(msg, type) {
-    statusText.textContent = msg;
-    statusText.className = type || '';
+    if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+    channelCount.textContent = msg;
+    channelCount.className = type || '';
+    // 错误/成功状态显示一段时间后恢复为频道数量
+    if (type === 'status-error' || type === 'status-ok') {
+      statusTimer = setTimeout(showChannelCount, 4000);
+    }
   }
 
   function getDomain(u) {
@@ -277,8 +304,10 @@ body {
   }
 
   /* ===== 加载播放列表 ===== */
-  function loadPlaylistFromUrl(url) {
+  function loadPlaylistFromUrl(url, name) {
     if (!url) return;
+    // 未传 name 时（如 URL 输入框加载），尝试匹配内置播放列表名称
+    if (!name) name = matchBuiltinName(url);
     setStatus('正在加载播放列表...', 'status-loading');
     loadBtn.disabled = true;
     fetch(proxyUrl(url))
@@ -290,6 +319,7 @@ body {
         var channels = parseM3U(text);
         if (channels.length === 0) throw new Error('未解析到任何频道');
         allChannels = channels;
+        currentPlaylistName = name || '';
         buildGroupSelect();
         renderChannelList();
         setStatus('已加载 ' + channels.length + ' 个频道', 'status-ok');
@@ -312,6 +342,7 @@ body {
         return;
       }
       allChannels = channels;
+      currentPlaylistName = '本地文件';
       buildGroupSelect();
       renderChannelList();
       setStatus('已从文件加载 ' + channels.length + ' 个频道', 'status-ok');
@@ -350,7 +381,7 @@ body {
 
   function renderChannelList() {
     var list = getFilteredChannels();
-    channelCount.textContent = '共 ' + list.length + ' / ' + allChannels.length + ' 个频道';
+    showChannelCount();
     channelList.innerHTML = '';
     if (list.length === 0) {
       var tip = document.createElement('li');
@@ -418,7 +449,6 @@ body {
     var streamUrl = proxyUrl(ch.url);
     showChannelName(ch.name);
     setStatus('正在连接: ' + ch.name, 'status-loading');
-    statusUrl.textContent = ch.url;
 
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
@@ -455,7 +485,7 @@ body {
       video.play().catch(function() {});
       setStatus('正在播放: ' + ch.name, 'status-ok');
     } else {
-      setStatus(window.Hls ? '当前浏览器不支持 HLS 播放' : 'hls.js 加载失败，请确认本地 hls.min.js 存在或网络可用', 'status-error');
+      setStatus(window.Hls ? '当前浏览器不支持 HLS 播放' : '视频解码库加载失败，请检查 js/hls.min.js 文件', 'status-error');
     }
     // 更新高亮（仅切换 active 类，不重建列表，避免大量频道时卡顿）
     var items = channelList.querySelectorAll('.channel-item');
@@ -467,10 +497,17 @@ body {
   /* ===== 事件绑定 ===== */
   toggleSidebar.addEventListener('click', function() {
     sidebar.classList.add('collapsed');
+    toggleFloat.style.display = 'block';
   });
   toggleFloat.addEventListener('click', function() {
     sidebar.classList.remove('collapsed');
+    toggleFloat.style.display = 'none';
   });
+  // 移动端小屏幕默认收起侧边栏，直接显示播放器，点击浮动按钮展开列表
+  if (window.matchMedia('(max-width: 768px)').matches) {
+    sidebar.classList.add('collapsed');
+    toggleFloat.style.display = 'block';
+  }
   loadBtn.addEventListener('click', function() {
     loadPlaylistFromUrl(urlInput.value.trim());
   });
@@ -503,7 +540,7 @@ body {
       btn.setAttribute('data-url', p.url);
       btn.addEventListener('click', function() {
         urlInput.value = p.url;
-        loadPlaylistFromUrl(p.url);
+        loadPlaylistFromUrl(p.url, p.name);
       });
       list.appendChild(btn);
     });
@@ -526,7 +563,8 @@ body {
     // 内置列表非空时第一项作为默认加载项，否则回退到 DEFAULT_PLAYLIST
     var defaultUrl = builtinPlaylists.length ? builtinPlaylists[0].url : DEFAULT_PLAYLIST;
     urlInput.value = savedUrl || defaultUrl;
-    loadPlaylistFromUrl(urlInput.value);
+    // savedUrl 匹配内置播放列表时传入对应名称，确保频道计数区显示播放列表名
+    loadPlaylistFromUrl(urlInput.value, matchBuiltinName(urlInput.value));
   }
 
   // 启动时先获取服务端配置（内置播放列表 + 默认播放列表），失败时回退到默认行为

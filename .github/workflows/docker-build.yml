@@ -69,6 +69,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: docker/Dockerfile
           platforms: ${{ matrix.platform }}
           tags: ${{ env.IMAGE_NAME }}:latest
           outputs: type=docker,dest=${{ env.IMAGE_NAME }}-${{ matrix.arch }}.tar
