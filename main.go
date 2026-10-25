@@ -12,8 +12,7 @@ import (
 
 // 配置常量
 const (
-	defaultPort     = "8080"
-	defaultPlaylist = "https://iptv-org.github.io/iptv/index.m3u"
+	defaultPort = "8080"
 )
 
 // 播放列表项（/config 接口返回结构）
@@ -84,9 +83,10 @@ func main() {
 	http.HandleFunc("/", routeHandler)
 
 	log.Printf("IPTV Live 代理服务器已启动: http://localhost:%s", port)
-	log.Printf("默认播放列表: %s", defaultPlaylist)
 	if len(builtinPlaylists) > 0 {
-		log.Printf("内置播放列表: %d 个", len(builtinPlaylists))
+		log.Printf("内置播放列表(PLAYLISTS): %d 个", len(builtinPlaylists))
+	} else {
+		log.Println("内置播放列表(PLAYLISTS): 未设置")
 	}
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
@@ -110,8 +110,7 @@ func routeHandler(w http.ResponseWriter, r *http.Request) {
 		handleProxy(w, r)
 	case "/config":
 		sendJSON(w, http.StatusOK, map[string]any{
-			"defaultPlaylist": defaultPlaylist,
-			"playlists":       builtinPlaylists,
+			"playlists": builtinPlaylists,
 		})
 	case "/health":
 		// 健康检查端点（供外部探测，如编排平台或 docker healthcheck）

@@ -1,10 +1,10 @@
 # IPTV Live
 
-基于 Go 代理 + hls.js 的 IPTV 网页播放器，打开即看，无需登录。单二进制零依赖部署。
+基于 Go 代理 + hls.js 的 IPTV 网页播放器，打开即看，无需登录。Docker 一键部署。
 
 ## 功能
 
-- 解析并播放 M3U/M3U8 播放列表（默认加载 [iptv-org](https://github.com/iptv-org/iptv) 频道列表）
+- 解析并播放 M3U/M3U8 播放列表（内置列表通过 `PLAYLISTS` 环境变量配置，未设置则列表为空）
 - 内置 CORS 代理服务器，解决浏览器跨域限制
 - 自动重写 M3U8 中的媒体段、子播放列表、密钥 URI，全部走代理
 - 支持 Range 请求透传（视频 seek）
@@ -20,41 +20,7 @@
 
 默认端口 8080，启动后浏览器访问 http://localhost:8080 即可观看。
 
-### 方式一：源码运行（需 Go 1.22+）
-
-```bash
-go run .
-```
-
-或编译为单二进制后运行：
-
-```bash
-go build -o iptv-live .
-./iptv-live
-```
-
-Windows 下编译产物为 `iptv-live.exe`。
-
-自定义端口：
-
-```bash
-set PORT=3000 && iptv-live.exe      # Windows
-PORT=3000 ./iptv-live               # Linux / macOS
-```
-
-### 方式二：Docker
-
-见下方 [Docker](#docker) 章节。
-
-### 下载预编译二进制
-
-进入仓库 **Releases** 页面，按平台下载对应压缩包，解压后直接运行（无需安装任何运行时）：
-
-- `iptv-live-linux-amd64.tar.gz` — Linux x86_64
-- `iptv-live-linux-arm64.tar.gz` — Linux ARM64
-- `iptv-live-windows-amd64.zip` — Windows x86_64
-- `iptv-live-darwin-amd64.tar.gz` — macOS Intel
-- `iptv-live-darwin-arm64.tar.gz` — macOS Apple Silicon
+本项目通过 Docker 部署，见下方 [Docker](#docker) 章节。
 
 ## Docker
 
@@ -83,7 +49,7 @@ docker run -d -p 8883:8080 iptv-live:latest
 docker run -d -p 3000:3000 -e PORT=3000 iptv-live:latest
 ```
 
-> 推送 `v*` 标签，或 push 到 main/master 且 commit message 含 `v*.*.*` 格式版本号时，GitHub Actions 会自动构建多平台 Go 二进制（linux/amd64、linux/arm64、windows/amd64、darwin/amd64、darwin/arm64）+ `linux/amd64` + `linux/arm64` Docker 镜像并发布到 GitHub Release（不推送任何镜像仓库）；普通 push 不含版本号时仅构建不发布。
+> 推送 `v*` 标签，或 push 到 main/master 且 commit message 含 `v*.*.*` 格式版本号时，GitHub Actions 会自动构建 `linux/amd64` + `linux/arm64` Docker 镜像并发布到 GitHub Release（不推送任何镜像仓库）；普通 push 不含版本号时仅构建不发布。
 
 ### 群晖 Compose 部署
 
@@ -140,7 +106,7 @@ services:
 注意事项：
 
 - YAML 中 JSON 字符串需用**单引号**包裹，内部双引号无需转义
-- 未设置 `PLAYLISTS` 时自动加载默认播放列表
+- `PLAYLISTS` 控制侧边栏内置列表按钮，未设置则内置列表为空
 - 格式非法时不会导致服务崩溃，仅在日志输出警告并忽略
 - 启动后访问 `http://<NAS-IP>:8883` 即可观看
 
@@ -168,13 +134,13 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 
 说明：
 
-- 未设置 `PLAYLISTS` 时保持默认行为，自动加载默认播放列表
+- `PLAYLISTS` 控制侧边栏内置列表按钮，未设置则内置列表为空
 - `PLAYLISTS` 格式非法时不会导致服务崩溃，仅在日志输出警告并忽略
-- 内置列表的第一项作为默认加载项；用户上次使用的 URL 仍会被记住（localStorage）
+- 加载优先级：上次使用的 URL（localStorage） > 内置列表第一项；都未设置则输入框留空，手动输入即可
 
 ## 使用方法
 
-1. 页面打开后自动加载默认播放列表
+1. 页面打开后自动加载上次使用的播放列表或内置列表第一项（若有）；否则输入框留空，手动输入 M3U 地址
 2. 左侧侧边栏可输入其他 M3U 播放列表 URL，点击「加载」
 3. 也可点击「上传本地播放列表」选择 `.m3u` / `.m3u8` 文件
 4. 使用搜索框按频道名过滤，下拉框按分组筛选
@@ -182,7 +148,7 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 
 ## 技术栈
 
-- **后端**：Go 标准库（net/http / net/url / crypto/tls / embed），零外部依赖，单静态二进制
+- **后端**：Go 标准库（net/http / net/url / crypto/tls / embed），零外部依赖，经 go:embed 将静态资源编译进二进制，Docker 镜像基于 scratch 最小化
 - **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（本地引入）；自建直播控制条（播放/暂停、音量、画面比例、全屏），无第三方 UI 库
 - **代理**：`/proxy?url=<encodeURIComponent(目标URL)>` 端点，流式转发 + M3U8 内容重写
   - 自动跟随 301/302/303/307/308 重定向（最多 5 次跳转，支持相对路径 Location）
@@ -210,7 +176,7 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 │   ├── Dockerfile   # Go 多阶段构建（scratch 最小镜像）
 │   └── docker-compose.yml  # 群晖 Docker Compose 部署配置
 ├── .github/workflows/
-│   └── docker-build.yml  # CI：多平台二进制 + Docker 镜像构建发布
+│   └── docker-build.yml  # CI：Docker 镜像构建发布
 ├── .dockerignore
 ├── README.md
 └── LICENSE

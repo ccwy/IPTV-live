@@ -13,13 +13,27 @@ env:
   IMAGE_NAME: iptv-live
 
 jobs:
-  detect-version:
-    name: 🔍 检测版本号
-    runs-on: ubuntu-latest
+  build:
+    name: 🐳 Docker 构建 (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+
     outputs:
       has_version: ${{ steps.version.outputs.has_version }}
       tag: ${{ steps.version.outputs.tag }}
+
     steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v7
+
       - name: 🔍 提取版本号
         id: version
         env:
@@ -45,22 +59,6 @@ jobs:
             echo "ℹ️ 未检测到版本号，仅构建不发布"
           fi
 
-  build-docker:
-    name: 🐳 Docker 构建 (${{ matrix.arch }})
-    runs-on: ubuntu-24.04
-    needs: detect-version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-          - platform: linux/arm64
-            arch: arm64
-    steps:
-      - name: 📥 检出代码
-        uses: actions/checkout@v7
-
       - name: 🔧 设置 QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -79,80 +77,24 @@ jobs:
           cache-to: type=gha,mode=max,scope=build-${{ matrix.arch }}
 
       - name: 📦 重命名镜像文件（含版本号）
-        if: needs.detect-version.outputs.has_version == 'true'
+        if: steps.version.outputs.has_version == 'true'
         run: |
-          mv "${{ env.IMAGE_NAME }}-${{ matrix.arch }}.tar" "${{ env.IMAGE_NAME }}-${{ matrix.arch }}-${{ needs.detect-version.outputs.tag }}.tar"
-          echo "✅ 已重命名: ${{ env.IMAGE_NAME }}-${{ matrix.arch }}-${{ needs.detect-version.outputs.tag }}.tar"
+          mv "${{ env.IMAGE_NAME }}-${{ matrix.arch }}.tar" "${{ env.IMAGE_NAME }}-${{ matrix.arch }}-${{ steps.version.outputs.tag }}.tar"
+          echo "✅ 已重命名: ${{ env.IMAGE_NAME }}-${{ matrix.arch }}-${{ steps.version.outputs.tag }}.tar"
 
       - name: 📦 上传构建产物
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.IMAGE_NAME }}-docker-${{ matrix.arch }}
+          name: ${{ env.IMAGE_NAME }}-${{ matrix.arch }}
           path: ${{ env.IMAGE_NAME }}-${{ matrix.arch }}*.tar
-          retention-days: 1
-
-  build-binary:
-    name: ⚙️ 二进制构建 (${{ matrix.goos }}/${{ matrix.goarch }})
-    runs-on: ubuntu-latest
-    needs: detect-version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            ext: ''
-            archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            ext: ''
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            ext: '.exe'
-            archive: zip
-          - goos: darwin
-            goarch: amd64
-            ext: ''
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            ext: ''
-            archive: tar.gz
-    steps:
-      - name: 📥 检出代码
-        uses: actions/checkout@v7
-
-      - name: 🔧 设置 Go 1.22
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: 🏗️ 编译 ${{ matrix.goos }}/${{ matrix.goarch }}
-        run: |
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o iptv-live${{ matrix.ext }} .
-          echo "✅ 编译完成: iptv-live${{ matrix.ext }} (${{ matrix.goos }}/${{ matrix.goarch }})"
-
-      - name: 📦 打包
-        run: |
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            zip iptv-live-${{ matrix.goos }}-${{ matrix.goarch }}.zip iptv-live${{ matrix.ext }}
-          else
-            tar czf iptv-live-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz iptv-live${{ matrix.ext }}
-          fi
-
-      - name: 📦 上传构建产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: iptv-live-binary-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: iptv-live-${{ matrix.goos }}-${{ matrix.goarch }}.*
           retention-days: 1
 
   release:
     name: 🚀 发布到 Release
-    needs: [detect-version, build-docker, build-binary]
-    if: needs.detect-version.outputs.has_version == 'true'
+    needs: build
+    if: needs.build.outputs.has_version == 'true'
     runs-on: ubuntu-latest
+
     steps:
       - name: 📥 下载构建产物
         uses: actions/download-artifact@v4
@@ -163,37 +105,19 @@ jobs:
       - name: 🚀 发布到 Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.detect-version.outputs.tag }}
-          name: IPTV Live ${{ needs.detect-version.outputs.tag }}
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: IPTV Live ${{ needs.build.outputs.tag }}
           body: |
-            IPTV Live ${{ needs.detect-version.outputs.tag }}
+            IPTV Live ${{ needs.build.outputs.tag }}
 
-            ## 方式一：预编译二进制（推荐，无需 Docker）
-            按平台下载对应压缩包，解压后直接运行（无需安装任何运行时）：
-
-            | 文件 | 平台 |
-            | --- | --- |
-            | `iptv-live-linux-amd64.tar.gz` | Linux x86_64 |
-            | `iptv-live-linux-arm64.tar.gz` | Linux ARM64 |
-            | `iptv-live-windows-amd64.zip` | Windows x86_64 |
-            | `iptv-live-darwin-amd64.tar.gz` | macOS Intel |
-            | `iptv-live-darwin-arm64.tar.gz` | macOS Apple Silicon |
-
-            解压后运行 `./iptv-live`（Windows 为 `iptv-live.exe`），浏览器访问 http://localhost:8080 即可观看。
-
-            ## 方式二：Docker 镜像
+            ## 使用方法
             1. 按设备架构下载对应 tar 文件：
-               - `iptv-live-amd64-${{ needs.detect-version.outputs.tag }}.tar` — linux/amd64
-               - `iptv-live-arm64-${{ needs.detect-version.outputs.tag }}.tar` — linux/arm64
-            2. 加载镜像：`docker load -i iptv-live-amd64-${{ needs.detect-version.outputs.tag }}.tar`
+               - `iptv-live-amd64-${{ needs.build.outputs.tag }}.tar` — linux/amd64
+               - `iptv-live-arm64-${{ needs.build.outputs.tag }}.tar` — linux/arm64
+            2. 加载镜像：`docker load -i iptv-live-amd64-${{ needs.build.outputs.tag }}.tar`
             3. 运行容器：`docker run -d -p 8883:8080 iptv-live:latest`
             4. 访问 http://localhost:8883 即可观看
           files: |
-            iptv-live-linux-amd64.tar.gz
-            iptv-live-linux-arm64.tar.gz
-            iptv-live-windows-amd64.zip
-            iptv-live-darwin-amd64.tar.gz
-            iptv-live-darwin-arm64.tar.gz
             iptv-live-amd64-*.tar
             iptv-live-arm64-*.tar
         env:

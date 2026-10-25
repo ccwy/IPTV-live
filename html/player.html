@@ -205,7 +205,6 @@ body {
 (function() {
   'use strict';
 
-  var DEFAULT_PLAYLIST = 'https://iptv-org.github.io/iptv/index.m3u';
   var PROXY_PREFIX = '/proxy?url=';
 
   // DOM
@@ -691,17 +690,17 @@ body {
   }
 
   /* ===== 初始化 ===== */
+  // 优先级：savedUrl > 内置列表第一项；都无则输入框留空，不自动加载
   function initStartup() {
     var savedUrl = '';
     try { savedUrl = localStorage.getItem('iptv-playlist-url') || ''; } catch(e) {}
-    // 内置列表非空时第一项作为默认加载项，否则回退到 DEFAULT_PLAYLIST
-    var defaultUrl = builtinPlaylists.length ? builtinPlaylists[0].url : DEFAULT_PLAYLIST;
+    var defaultUrl = builtinPlaylists.length ? builtinPlaylists[0].url : '';
     urlInput.value = savedUrl || defaultUrl;
-    // savedUrl 匹配内置播放列表时传入对应名称，确保频道计数区显示播放列表名
+    // 有 URL 才加载（loadPlaylistFromUrl 内有空值守卫）；savedUrl 匹配内置播放列表时传入对应名称
     loadPlaylistFromUrl(urlInput.value, matchBuiltinName(urlInput.value));
   }
 
-  // 启动时先获取服务端配置（内置播放列表 + 默认播放列表），失败时回退到默认行为
+  // 启动时先获取服务端配置（内置播放列表），失败时按空列表初始化
   fetch('/config')
     .then(function(resp) { return resp.json(); })
     .then(function(cfg) {
