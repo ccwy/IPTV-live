@@ -380,20 +380,55 @@ body {
     setStatus('正在读取文件...', 'status-loading');
     var reader = new FileReader();
     reader.onload = function(e) {
-      var channels = parseM3U(e.target.result);
+      var text = e.target.result;
+      var channels = parseM3U(text);
       if (channels.length === 0) {
         setStatus('文件中未解析到频道', 'status-error');
         return;
       }
+      var key = 'local://' + Date.now();
+      var name = (file && file.name) ? file.name.replace(/\.(m3u8?|txt)$/i, '') : '本地文件';
       allChannels = channels;
-      currentPlaylistName = '本地文件';
+      currentPlaylistName = name;
       buildGroupSelect();
       renderChannelList();
-      setStatus('已从文件加载 ' + channels.length + ' 个频道', 'status-ok');
-      setActivePlaylistBtn('');
+      var saved = addCustomPlaylist(key, name, text);
+      renderPlaylists();
+      setActivePlaylistBtn(key);
+      if (saved) {
+        try { localStorage.setItem('iptv-playlist-url', key); } catch(e) {}
+        setStatus('已从文件加载 ' + channels.length + ' 个频道', 'status-ok');
+      } else {
+        // 容量不足未能持久化:当前会话可用,刷新后需重新上传
+        setStatus('已加载 ' + channels.length + ' 个频道(存储空间不足,未保存)', 'status-ok');
+      }
     };
     reader.onerror = function() { setStatus('读取文件失败', 'status-error'); };
     reader.readAsText(file);
+  }
+
+  // 加载本地上传的播放列表(从 localStorage 中存储的 M3U 原文解析,无需网络请求)
+  function loadPlaylistFromLocal(key, name) {
+    var item = null;
+    for (var i = 0; i < customPlaylists.length; i++) {
+      if (customPlaylists[i].url === key) { item = customPlaylists[i]; break; }
+    }
+    if (!item || !item.content) {
+      setStatus('本地播放列表数据已丢失,请重新上传文件', 'status-error');
+      return;
+    }
+    var channels = parseM3U(item.content);
+    if (channels.length === 0) {
+      setStatus('未解析到任何频道', 'status-error');
+      return;
+    }
+    allChannels = channels;
+    currentPlaylistName = name || item.name;
+    buildGroupSelect();
+    renderChannelList();
+    setStatus('已加载 ' + channels.length + ' 个频道', 'status-ok');
+    try { localStorage.setItem('iptv-playlist-url', key); } catch(e) {}
+    setActivePlaylistBtn(key);
   }
 
   /* ===== 分组与渲染 ===== */
@@ -685,20 +720,34 @@ body {
   }
 
   // 将已加载的播放列表加入自定义列表（去重：服务端列表和自定义列表中已存在同 URL 则不添加）
-  function addCustomPlaylist(url) {
-    if (!url) return;
+  // url:在线列表为真实 URL;本地上传列表为 'local://' + 时间戳 伪 URL
+  // name/content 为可选:本地上传时传入文件名与 M3U 原文
+  // 返回 true 表示已加入且持久化成功;false 表示已存在或持久化失败(容量不足)
+  function addCustomPlaylist(url, name, content) {
+    if (!url) return false;
     var all = serverPlaylists.concat(customPlaylists);
     for (var i = 0; i < all.length; i++) {
-      if (all[i].url === url) return; // 已存在，不重复添加
+      if (all[i].url === url) return false; // 已存在，不重复添加
     }
-    customPlaylists.push({ name: derivePlaylistName(url), url: url });
-    try { localStorage.setItem('iptv-custom-playlists', JSON.stringify(customPlaylists)); } catch(e) {}
+    var item = { name: name || derivePlaylistName(url), url: url };
+    if (content !== undefined) item.content = content;
+    customPlaylists.push(item);
+    try {
+      localStorage.setItem('iptv-custom-playlists', JSON.stringify(customPlaylists));
+      return true;
+    } catch(e) {
+      return false; // 存储空间不足等,当前会话仍可用,刷新后丢失
+    }
   }
 
   // 删除自定义播放列表项（仅允许删自定义项，服务端项不可删）
   function removeCustomPlaylist(url) {
     customPlaylists = customPlaylists.filter(function(p) { return p.url !== url; });
-    try { localStorage.setItem('iptv-custom-playlists', JSON.stringify(customPlaylists)); } catch(e) {}
+    try {
+      localStorage.setItem('iptv-custom-playlists', JSON.stringify(customPlaylists));
+      var savedUrl = localStorage.getItem('iptv-playlist-url') || '';
+      if (savedUrl === url) localStorage.removeItem('iptv-playlist-url');
+    } catch(e) {}
     renderPlaylists();
     setActivePlaylistBtn(urlInput.value.trim());
   }
@@ -727,8 +776,12 @@ body {
       btn.textContent = p.name;
       btn.setAttribute('data-url', p.url);
       btn.addEventListener('click', function() {
-        urlInput.value = p.url;
-        loadPlaylistFromUrl(p.url, p.name);
+        if (p.url.indexOf('local://') === 0) {
+          loadPlaylistFromLocal(p.url, p.name);
+        } else {
+          urlInput.value = p.url;
+          loadPlaylistFromUrl(p.url, p.name);
+        }
       });
       item.appendChild(btn);
       if (isCustom) {
@@ -764,9 +817,15 @@ body {
     try { savedUrl = localStorage.getItem('iptv-playlist-url') || ''; } catch(e) {}
     var all = serverPlaylists.concat(customPlaylists);
     var defaultUrl = all.length ? all[0].url : '';
-    urlInput.value = savedUrl || defaultUrl;
-    // 有 URL 才加载（loadPlaylistFromUrl 内有空值守卫）；savedUrl 匹配播放列表时传入对应名称
-    loadPlaylistFromUrl(urlInput.value, matchPlaylistName(urlInput.value));
+    // 恢复优先:上次加载的地址(含本地上传的 local:// 伪 URL);否则取列表第一项
+    var target = savedUrl || defaultUrl;
+    if (!target) return; // 无任何列表,输入框留空,不自动加载
+    if (target.indexOf('local://') === 0) {
+      loadPlaylistFromLocal(target, matchPlaylistName(target));
+    } else {
+      urlInput.value = target;
+      loadPlaylistFromUrl(target, matchPlaylistName(target));
+    }
   }
 
   // 启动时先获取服务端配置（播放列表），失败时按空列表初始化
