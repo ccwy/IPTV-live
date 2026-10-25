@@ -746,7 +746,19 @@ body {
     try {
       localStorage.setItem('iptv-custom-playlists', JSON.stringify(customPlaylists));
       var savedUrl = localStorage.getItem('iptv-playlist-url') || '';
-      if (savedUrl === url) localStorage.removeItem('iptv-playlist-url');
+      if (savedUrl === url) {
+        localStorage.removeItem('iptv-playlist-url');
+        // 删除的是当前正在使用的播放列表,清理频道状态并停止播放
+        allChannels = [];
+        currentChannel = null;
+        currentPlaylistName = '';
+        destroyHls();
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch(e) {}
+        channelNameOverlay.classList.remove('show');
+        if (overlayTimer) { clearTimeout(overlayTimer); overlayTimer = null; }
+        renderChannelList();
+        setStatus('播放列表已删除', 'status-ok');
+      }
     } catch(e) {}
     renderPlaylists();
     setActivePlaylistBtn(urlInput.value.trim());
