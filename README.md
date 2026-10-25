@@ -1,6 +1,6 @@
 # IPTV Live
 
-基于 Node.js 代理 + hls.js 的 IPTV 网页播放器，打开即看，无需登录。
+基于 Go 代理 + hls.js 的 IPTV 网页播放器，打开即看，无需登录。单二进制零依赖部署。
 
 ## 功能
 
@@ -18,17 +18,43 @@
 
 ## 快速开始
 
+默认端口 8080，启动后浏览器访问 http://localhost:8080 即可观看。
+
+### 方式一：源码运行（需 Go 1.22+）
+
 ```bash
-node js/server.js
+go run .
 ```
 
-浏览器访问 http://localhost:8883 即可观看。
+或编译为单二进制后运行：
+
+```bash
+go build -o iptv-live .
+./iptv-live
+```
+
+Windows 下编译产物为 `iptv-live.exe`。
 
 自定义端口：
 
 ```bash
-set PORT=3000 && node js/server.js
+set PORT=3000 && iptv-live.exe      # Windows
+PORT=3000 ./iptv-live               # Linux / macOS
 ```
+
+### 方式二：Docker
+
+见下方 [Docker](#docker) 章节。
+
+### 下载预编译二进制
+
+进入仓库 **Releases** 页面，按平台下载对应压缩包，解压后直接运行（无需安装任何运行时）：
+
+- `iptv-live-linux-amd64.tar.gz` — Linux x86_64
+- `iptv-live-linux-arm64.tar.gz` — Linux ARM64
+- `iptv-live-windows-amd64.zip` — Windows x86_64
+- `iptv-live-darwin-amd64.tar.gz` — macOS Intel
+- `iptv-live-darwin-arm64.tar.gz` — macOS Apple Silicon
 
 ## Docker
 
@@ -57,7 +83,7 @@ docker run -d -p 8883:8080 iptv-live:latest
 docker run -d -p 3000:3000 -e PORT=3000 iptv-live:latest
 ```
 
-> 推送 `v*` 标签，或 push 到 main/master 且 commit message 含 `v*.*.*` 格式版本号时，GitHub Actions 会自动构建 `linux/amd64` + `linux/arm64` 镜像并发布到 GitHub Release（不推送任何镜像仓库）；普通 push 不含版本号时仅构建不发布。
+> 推送 `v*` 标签，或 push 到 main/master 且 commit message 含 `v*.*.*` 格式版本号时，GitHub Actions 会自动构建多平台 Go 二进制（linux/amd64、linux/arm64、windows/amd64、darwin/amd64、darwin/arm64）+ `linux/amd64` + `linux/arm64` Docker 镜像并发布到 GitHub Release（不推送任何镜像仓库）；普通 push 不含版本号时仅构建不发布。
 
 ### 群晖 Compose 部署
 
@@ -156,30 +182,35 @@ docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
 
 ## 技术栈
 
-- **后端**：Node.js 内置模块（http / https / url / fs / path），零外部依赖
+- **后端**：Go 标准库（net/http / net/url / crypto/tls / embed），零外部依赖，单静态二进制
 - **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（本地引入）；自建直播控制条（播放/暂停、音量、画面比例、全屏），无第三方 UI 库
 - **代理**：`/proxy?url=<encodeURIComponent(目标URL)>` 端点，流式转发 + M3U8 内容重写
   - 自动跟随 301/302/303/307/308 重定向（最多 5 次跳转，支持相对路径 Location）
   - 转发 Referer/Cookie 头，本站地址自动改写为目标同域，规避防盗链 403
-  - HTTPS 放宽证书校验（rejectUnauthorized=false），兼容自签名证书源
+  - HTTPS 放宽证书校验（`tls.Config{InsecureSkipVerify: true}`），兼容自签名证书源
   - 连接超时 60 秒，慢速源友好
   - 非 UTF-8 编码的 M3U8 检测到乱码时放弃重写、透传原始内容
+- **静态资源**：经 go:embed 编译进二进制，运行时无需外部文件
 
 ## 项目结构
 
 ```
-├── js/
-│   ├── server.js    # 代理服务器（CORS代理 + M3U8重写 + 静态文件服务）
-│   └── hls.min.js   # 本地 hls.js 库
+├── main.go          # 入口：配置加载、路由、静态文件服务
+├── proxy.go         # CORS 代理：重定向跟随、M3U8 检测、流式转发
+├── rewrite.go       # M3U8 内容重写、URL 解析、encodeURIComponent
+├── embed.go         # go:embed 静态资源嵌入
+├── go.mod           # Go 模块定义（零外部依赖）
 ├── html/
 │   └── player.html  # 前端播放页面（单文件）
+├── js/
+│   └── hls.min.js   # 本地 hls.js 库（浏览器端播放）
 ├── img/
 │   └── favicon.ico  # 网站图标
 ├── docker/
-│   ├── Dockerfile   # Docker 镜像构建文件
+│   ├── Dockerfile   # Go 多阶段构建（scratch 最小镜像）
 │   └── docker-compose.yml  # 群晖 Docker Compose 部署配置
 ├── .github/workflows/
-│   └── docker-build.yml  # CI 自动构建多平台镜像并发布到 GitHub Release
+│   └── docker-build.yml  # CI：多平台二进制 + Docker 镜像构建发布
 ├── .dockerignore
 ├── README.md
 └── LICENSE

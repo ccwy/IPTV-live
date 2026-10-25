@@ -7,18 +7,18 @@
 .vscode
 .idea
 
-# 依赖（本项目零依赖，但仍排除以防意外）
-node_modules
-npm-debug.log
-
-# CI / 文档
+# CI / 文档（构建镜像无需这些文件）
 .github
-README.md
+*.md
 LICENSE
 
 # Docker 本身
 docker/
 .dockerignore
+
+# 本地构建产物
+iptv-live
+iptv-live.exe
 
 # 系统文件
 .DS_Store
