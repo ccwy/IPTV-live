@@ -525,6 +525,9 @@ body {
     channelList.appendChild(frag);
   }
 
+  // 移动端检测（HLS 配置与控制条隐藏均需使用，需在 playChannel 定义前声明）
+  var isMobile = window.matchMedia('(max-width: 768px)').matches || window.innerWidth <= 768;
+
   /* ===== 播放 ===== */
   function destroyHls() {
     if (hls) { try { hls.destroy(); } catch(e) {} hls = null; }
@@ -539,19 +542,25 @@ body {
 
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
-        liveSyncDurationCount: 6,            // 播放点距直播边缘6个分片，弱网下缓冲余量更大
-        liveMaxLatencyDurationCount: 12,     // 最大延迟12个分片，配合更大的缓冲
-        maxBufferLength: 90,                 // 前向缓冲从90秒延长到60秒，应对网络波动
-        maxMaxBufferLength: 150,             // 缓冲上限150秒，防止内存过度增长
-        manifestLoadingTimeOut: 30000,       // manifest加载超时从10秒延长到30秒
-        manifestLoadingMaxRetry: 6,          // manifest重试从2次增加到6次
-        manifestLoadingRetryDelay: 1000,     // manifest重试间隔1秒
-        levelLoadingTimeOut: 30000,          // 级别加载超时从10秒延长到30秒
-        levelLoadingMaxRetry: 6,             // 级别加载重试6次
-        levelLoadingRetryDelay: 1000,        // 级别加载重试间隔1秒
-        fragLoadingTimeOut: 60000,           // 分片加载超时从20秒延长到60秒
-        fragLoadingMaxRetry: 10,              // 分片加载重试10次，弱网兜底
-        fragLoadingRetryDelay: 500           // 分片重试间隔500ms
+        liveSyncDurationCount: 6,                // 播放点距直播边缘6个分片，弱网下缓冲余量更大
+        liveMaxLatencyDurationCount: 12,         // 最大延迟12个分片，配合更大的缓冲
+        enableWorker: true,                      // Web Worker 解复用，减轻主线程压力，避免移动端软解闪烁掉帧
+        maxBufferLength: isMobile ? 30 : 60,     // 前向缓冲：移动端30秒/桌面端60秒，过大易致 SourceBuffer 溢出花屏
+        maxMaxBufferLength: isMobile ? 60 : 120, // 缓冲上限：移动端60秒/桌面端120秒，防止内存过度增长
+        capLevelToPlayerSize: true,              // 按播放器实际尺寸限制码率层级，避免移动端硬解超高清流花屏失真
+        startLevel: isMobile ? 0 : -1,           // 起播码率：移动端从最低码率起播(0)，桌面端自动选择(-1)
+        abrEwmaDefaultEstimate: 500000,          // 初始带宽估计500kbps，保守起播避免直接拉高码率
+        abrBandWidthFactor: 0.95,                // ABR带宽安全系数，减少码率频繁切换
+        abrBandWidthUpFactor: 0.7,               // 升级码率更保守，避免频繁升降导致SPS/PPS切换花屏
+        manifestLoadingTimeOut: 30000,           // manifest加载超时从10秒延长到30秒
+        manifestLoadingMaxRetry: 6,              // manifest重试从2次增加到6次
+        manifestLoadingRetryDelay: 1000,         // manifest重试间隔1秒
+        levelLoadingTimeOut: 30000,              // 级别加载超时从10秒延长到30秒
+        levelLoadingMaxRetry: 6,                 // 级别加载重试6次
+        levelLoadingRetryDelay: 1000,            // 级别加载重试间隔1秒
+        fragLoadingTimeOut: 60000,               // 分片加载超时从20秒延长到60秒
+        fragLoadingMaxRetry: 10,                 // 分片加载重试10次，弱网兜底
+        fragLoadingRetryDelay: 500               // 分片重试间隔500ms
       });
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
@@ -625,7 +634,6 @@ body {
   var btnFullscreen = document.getElementById('btn-fullscreen');
 
   // 控制条自动隐藏：鼠标离开播放区域后隐藏（移动端 5 秒，桌面端 3 秒），暂停时始终显示
-  var isMobile = window.matchMedia('(max-width: 768px)').matches || window.innerWidth <= 768;
   var hideControlsDelay = isMobile ? 5000 : 3000;
   var hideControlsTimer = null;
   function hideControls() { playerControls.classList.add('hidden-controls'); }
