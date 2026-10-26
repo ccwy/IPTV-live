@@ -54,6 +54,10 @@ var upstreamClient = &http.Client{
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
 		DisableCompression:    true, // 请求已显式 Accept-Encoding: identity，禁止自动解压干扰头透传
+		// 连接池扩容：hls.js 并发拉取分片时复用空闲连接，避免频繁重建连接造成交付抖动
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
 	},
 }
 
@@ -273,6 +277,9 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 		}
 		rec.Header().Set("Content-Type", ct)
 		rec.Header().Set("Content-Length", strconv.Itoa(len(rawBuf)))
+		// 禁用浏览器缓存：直播播放列表必须每次拉取最新版本，旧播放列表会导致播放跳帧
+		rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+		rec.Header().Set("Pragma", "no-cache")
 		rec.WriteHeader(status304to200(resp.StatusCode))
 		_, _ = rec.Write(rawBuf)
 		return
@@ -294,6 +301,9 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 		rec.Header().Set("Content-Type", ct)
 	}
 	rec.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	// 禁用浏览器缓存：直播播放列表必须每次拉取最新版本，旧播放列表会导致播放跳帧
+	rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	rec.Header().Set("Pragma", "no-cache")
 	rec.WriteHeader(status304to200(resp.StatusCode))
 	_, _ = rec.Write([]byte(body))
 }
@@ -310,18 +320,27 @@ func streamResponse(rec *responseRecorder, resp *http.Response) {
 			rec.Header().Add(k, v)
 		}
 	}
-	rec.WriteHeader(resp.StatusCode)
-	// 流式拷贝响应体并逐块刷新，降低直播流缓冲延迟；客户端断开或上游读取错误时静默结束
-	buf := make([]byte, 32*1024)
+	rec.WriteHeader(status304to200(resp.StatusCode))
+	// 流式拷贝响应体并累积刷新，降低直播流缓冲延迟；客户端断开或上游读取错误时静默结束
+	buf := make([]byte, 256*1024)
+	pending := 0
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := rec.Write(buf[:n]); werr != nil {
 				return
 			}
-			rec.Flush()
+			pending += n
+			// 累积足够数据后再刷新，减少小包与 syscall 开销，同时保持流式实时性
+			if pending >= 128*1024 {
+				rec.Flush()
+				pending = 0
+			}
 		}
 		if readErr != nil {
+			if pending > 0 {
+				rec.Flush()
+			}
 			return
 		}
 	}

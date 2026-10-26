@@ -542,8 +542,8 @@ body {
 
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
-        liveSyncDurationCount: 6,                // 播放点距直播边缘6个分片，弱网下缓冲余量更大
-        liveMaxLatencyDurationCount: 12,         // 最大延迟12个分片，配合更大的缓冲
+        liveSyncDurationCount: 4,                // 播放点距直播边缘4个分片，缩短与直播边缘距离减少落后积累
+        liveMaxLatencyDurationCount: 8,          // 最大延迟8个分片，超过才 seek，跳转幅度更小画面跳变不明显
         enableWorker: true,                      // Web Worker 解复用，减轻主线程压力，避免移动端软解闪烁掉帧
         maxBufferLength: isMobile ? 30 : 60,     // 前向缓冲：移动端30秒/桌面端60秒，过大易致 SourceBuffer 溢出花屏
         maxMaxBufferLength: isMobile ? 60 : 120, // 缓冲上限：移动端60秒/桌面端120秒，防止内存过度增长
