@@ -143,7 +143,7 @@ body {
 }
 #btn-aspect { margin-left: auto; font-size: clamp(11px, 1.6vw, 13px); }
 .status-loading { color: #e94560; }
-.status-error { color: #ff6b6b; }
+.status-error { color: #ff0000; }
 .status-ok { color: #51cf66; }
 /* ===== 移动端 ===== */
 @media (max-width: 768px) {
@@ -683,23 +683,36 @@ body {
     applyAspect();
   });
 
-  // 全屏（兼容 Safari webkit 前缀）
+  // 全屏（兼容 Safari webkit 前缀与 iOS video 原生全屏）
   btnFullscreen.addEventListener('click', function() {
+    var p;
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       if (document.exitFullscreen) document.exitFullscreen();
       else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      else if (video.webkitExitFullscreen) video.webkitExitFullscreen();
     } else if (playerArea.requestFullscreen) {
-      playerArea.requestFullscreen();
+      p = playerArea.requestFullscreen();
+      if (p && p.catch) p.catch(function() {});
     } else if (playerArea.webkitRequestFullscreen) {
       playerArea.webkitRequestFullscreen();
+    } else if (video.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
+    } else if (video.requestFullscreen) {
+      p = video.requestFullscreen();
+      if (p && p.catch) p.catch(function() {});
+    } else if (video.webkitRequestFullscreen) {
+      video.webkitRequestFullscreen();
     }
   });
   function onFullscreenChange() {
-    var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    var isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || video.webkitDisplayingFullscreen);
     btnFullscreen.textContent = isFs ? '⤢' : '⛶';
   }
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+  // iOS video 原生全屏事件不冒泡到 document，必须绑定在 video 元素上
+  video.addEventListener('webkitenterfullscreen', onFullscreenChange);
+  video.addEventListener('webkitexitfullscreen', onFullscreenChange);
 
   // 鼠标进入/移动播放区域显示控制条，移出后 3 秒隐藏
   playerArea.addEventListener('mouseenter', showControlsAuto);
