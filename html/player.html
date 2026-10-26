@@ -12,7 +12,10 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden;
+  background: #1a1a2e; color: #e0e0e0;
+  height: 100vh;      /* 老浏览器回退 */
+  height: 100dvh;     /* 移动端 Chrome/Safari 动态视口，工具栏显隐时自动适配 */
+  display: flex; overflow: hidden;
 }
 /* ===== 侧边栏 ===== */
 #sidebar {
@@ -109,7 +112,7 @@ body {
 }
 #sidebar-toggle-float:hover { background: #e94560; }
 #player-area { flex: 1; background: #000; position: relative; overflow: hidden; }
-#video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+#video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
 #channel-name-overlay {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   background: rgba(0,0,0,.65); color: #fff; padding: 6px 18px; border-radius: 20px;
@@ -161,6 +164,11 @@ body {
   .sidebar-section input[type="text"], .sidebar-section select { padding: 6px 8px; font-size: 12px; }
   /* 播放列表胶囊按钮确保可换行 */
   .playlists .playlists-list { flex-wrap: wrap; }
+  /* 播放器控制条触摸友好：增大按钮触摸区域(约44px)，aspect 按钮更醒目易发现 */
+  #player-controls { padding: 10px 12px; gap: 4px; }
+  #player-controls button { padding: 14px 12px; font-size: 16px; }
+  #btn-aspect { font-size: 14px; min-width: 56px; text-align: center; }
+  #volume-slider { width: 72px; }
 }
 </style>
 </head>
@@ -616,7 +624,9 @@ body {
   var btnAspect = document.getElementById('btn-aspect');
   var btnFullscreen = document.getElementById('btn-fullscreen');
 
-  // 控制条自动隐藏：鼠标离开播放区域 3 秒后隐藏，暂停时始终显示
+  // 控制条自动隐藏：鼠标离开播放区域后隐藏（移动端 5 秒，桌面端 3 秒），暂停时始终显示
+  var isMobile = window.matchMedia('(max-width: 768px)').matches || window.innerWidth <= 768;
+  var hideControlsDelay = isMobile ? 5000 : 3000;
   var hideControlsTimer = null;
   function hideControls() { playerControls.classList.add('hidden-controls'); }
   function showControls() { playerControls.classList.remove('hidden-controls'); }
@@ -624,7 +634,7 @@ body {
     if (hideControlsTimer) clearTimeout(hideControlsTimer);
     hideControlsTimer = setTimeout(function() {
       if (!video.paused) hideControls();
-    }, 3000);
+    }, hideControlsDelay);
   }
   function showControlsAuto() { showControls(); scheduleHide(); }
 
@@ -662,7 +672,7 @@ body {
     { name: '铺满', value: 'cover' },
     { name: '拉伸', value: 'fill' }
   ];
-  var aspectIndex = 1; // 默认铺满(cover)
+  var aspectIndex = isMobile ? 0 : 1; // 移动端默认适应(contain)，桌面端默认铺满(cover)
   function applyAspect() {
     video.style.objectFit = aspectModes[aspectIndex].value;
     btnAspect.textContent = aspectModes[aspectIndex].name;
