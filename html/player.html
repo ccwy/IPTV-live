@@ -542,8 +542,8 @@ body {
 
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
-        liveSyncDurationCount: 4,                // 播放点距直播边缘4个分片，缩短与直播边缘距离减少落后积累
-        liveMaxLatencyDurationCount: 8,          // 最大延迟8个分片，超过才 seek，跳转幅度更小画面跳变不明显
+        liveSyncDurationCount: 5,                // 播放点距直播边缘5个分片，给首片冷启动下载留余量
+        liveMaxLatencyDurationCount: 10,         // 最大延迟10个分片，落后5~10片之间用1.5倍速平滑追赶，超10片才seek
         enableWorker: true,                      // Web Worker 解复用，减轻主线程压力，避免移动端软解闪烁掉帧
         maxBufferLength: isMobile ? 30 : 60,     // 前向缓冲：移动端30秒/桌面端60秒，过大易致 SourceBuffer 溢出花屏
         maxMaxBufferLength: isMobile ? 60 : 120, // 缓冲上限：移动端60秒/桌面端120秒，防止内存过度增长
@@ -560,13 +560,29 @@ body {
         levelLoadingRetryDelay: 1000,            // 级别加载重试间隔1秒
         fragLoadingTimeOut: 60000,               // 分片加载超时从20秒延长到60秒
         fragLoadingMaxRetry: 10,                 // 分片加载重试10次，弱网兜底
-        fragLoadingRetryDelay: 500               // 分片重试间隔500ms
+        fragLoadingRetryDelay: 500,              // 分片重试间隔500ms
+        maxLiveSyncPlaybackRate: 1.5,            // 落后直播边缘时以1.5倍速平滑追赶，避免直接seek跳转造成画面跳跃
+        startFragPrefetch: true,                 // manifest解析后立即预取首片，配合延迟起播策略尽早开始下载
+        liveDurationInfinity: true               // 直播场景 MediaSource duration 设为 Infinity，避免 seek 越界
       });
       hls.loadSource(streamUrl);
       hls.attachMedia(video);
+      // 起播缓冲标志：每次切换频道需重置，确保新频道也等缓冲够再起播
+      var playbackStarted = false;
+      var bufferedFragCount = 0;             // 已缓冲分片计数：缓冲2片(约4~10秒)再起播，比1片更抗网络抖动，彻底避免"起播即卡"
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        setStatus('正在播放: ' + ch.name, 'status-ok');
-        video.play().catch(function() {});
+        setStatus('缓冲中: ' + ch.name, 'status-loading');
+        // 不立即 play：零缓冲起播会卡住，卡住期间落后直播边缘触发 seek 跳转；等 FRAG_BUFFERED 缓冲满2片后再播
+      });
+      hls.on(Hls.Events.FRAG_BUFFERED, function() {
+        if (!playbackStarted) {
+          bufferedFragCount++;
+          if (bufferedFragCount >= 2) {
+            playbackStarted = true;
+            setStatus('正在播放: ' + ch.name, 'status-ok');
+            video.play().catch(function() {});
+          }
+        }
       });
       hls.on(Hls.Events.ERROR, function(evt, data) {
         if (!data.fatal) return;

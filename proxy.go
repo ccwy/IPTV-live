@@ -58,6 +58,8 @@ var upstreamClient = &http.Client{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 20,
 		IdleConnTimeout:     90 * time.Second,
+		// 启用 HTTP/2 多路复用：https 上游所有分片请求共享单连接，避免每分片新建 TCP/TLS 连接的冷启动延迟与并发抖动
+		ForceAttemptHTTP2:   true,
 	},
 }
 
