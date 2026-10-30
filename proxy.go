@@ -3,16 +3,41 @@ package main
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
+
+// 环境变量布尔值读取（解析失败返回默认值）
+func envBool(key string, def bool) bool {
+	if v, err := strconv.ParseBool(os.Getenv(key)); err == nil {
+		return v
+	}
+	return def
+}
+
+// SSRF 防护开关：默认禁止代理访问内网/保留地址段；
+// 需代理局域网直播源时，可设环境变量 ALLOW_PRIVATE_NETWORK=true 放开
+var allowPrivateNetwork = envBool("ALLOW_PRIVATE_NETWORK", false)
+
+// 上游 TLS 证书校验开关：默认跳过校验（部分小众直播源使用自签名证书）；
+// 设环境变量 UPSTREAM_TLS_SKIP_VERIFY=false 可开启严格证书校验
+var upstreamInsecureSkipVerify = envBool("UPSTREAM_TLS_SKIP_VERIFY", true)
+
+// m3u8 响应体最大字节数（防止恶意上游返回超大内容导致内存耗尽）
+const maxM3U8Bytes = 10 * 1024 * 1024
+
+// SSRF 拦截错误（连接内网/保留地址时返回）
+var errSSRFBlocked = errors.New("target address is in a blocked private/reserved network range")
 
 // 需要从目标响应中移除的头（会干扰 CORS 或缓存）
 var stripHeaders = map[string]bool{
@@ -49,8 +74,9 @@ var upstreamClient = &http.Client{
 		DialContext: (&net.Dialer{
 			Timeout:   60 * time.Second,
 			KeepAlive: 30 * time.Second,
+			Control:   dialControl, // SSRF 防护：连接前校验目标 IP
 		}).DialContext,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true}, // 放宽自签名证书校验，部分小众源自签名
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: upstreamInsecureSkipVerify}, // 放宽自签名证书校验，部分小众源自签名
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 60 * time.Second,
 		DisableCompression:    true, // 请求已显式 Accept-Encoding: identity，禁止自动解压干扰头透传
@@ -95,6 +121,13 @@ func (r *responseRecorder) Flush() {
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	// 包装响应以跟踪写头状态
 	rec := &responseRecorder{ResponseWriter: w}
+
+	// 仅允许 GET/HEAD 方法（OPTIONS 已在 routeHandler 全局处理）
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		rec.Header().Set("Allow", "GET, HEAD")
+		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
+		return
+	}
 
 	targetUrlStr := r.URL.Query().Get("url")
 	if targetUrlStr == "" {
@@ -182,6 +215,13 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 		if r.Context().Err() != nil {
 			return
 		}
+		// SSRF 拦截：目标地址属于内网/保留地址段
+		if errors.Is(err, errSSRFBlocked) {
+			sendJSON(rec, http.StatusForbidden, map[string]string{
+				"error": "目标地址属于内网或保留地址段，禁止代理访问（如需代理局域网源，设置环境变量 ALLOW_PRIVATE_NETWORK=true）",
+			})
+			return
+		}
 		if isTimeoutErr(err) {
 			sendJSON(rec, http.StatusGatewayTimeout, map[string]string{
 				"error": "连接目标服务器超时(60s): " + targetUrlStr,
@@ -259,13 +299,107 @@ func isLocalHost(host string) bool {
 		reLocal192.MatchString(host) || reLocal10.MatchString(host) || reLocal172.MatchString(host)
 }
 
+// 判断 IP 是否属于禁止代理访问的内网/保留地址段
+func isBlockedIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		// 0.0.0.0/8（本网络段）
+		if ip4[0] == 0 {
+			return true
+		}
+		// 100.64.0.0/10（CGNAT，云厂商元数据服务常用，如阿里云 100.100.100.200）
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true
+		}
+		// 192.0.0.0/24、192.0.2.0/24（TEST-NET）
+		if ip4[0] == 192 && ip4[1] == 0 && (ip4[2] == 0 || ip4[2] == 2) {
+			return true
+		}
+		// 192.88.99.0/24（6to4 中继任播，RFC 7526 已废弃）
+		if ip4[0] == 192 && ip4[1] == 88 && ip4[2] == 99 {
+			return true
+		}
+		// 198.18.0.0/15（基准测试）
+		if ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19) {
+			return true
+		}
+		// 198.51.100.0/24、203.0.113.0/24（TEST-NET-2/3）
+		if ip4[0] == 198 && ip4[1] == 51 && ip4[2] == 100 {
+			return true
+		}
+		if ip4[0] == 203 && ip4[1] == 0 && ip4[2] == 113 {
+			return true
+		}
+		// 240.0.0.0/4（保留）与 255.255.255.255（广播）
+		if ip4[0] >= 240 {
+			return true
+		}
+	} else {
+		// 6to4 隧道 2002::/16：第 2-5 字节为嵌入的 IPv4 地址，递归校验防止内网 IPv4 借道绕过
+		// （如 2002:0a00:1:: 嵌入 10.0.0.1）
+		if ip[0] == 0x20 && ip[1] == 0x02 {
+			return isBlockedIP(net.IP(ip[2:6]))
+		}
+		// Teredo 隧道 2001:0000::/32：可经中继访问内网，直接拦截
+		if ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x00 && ip[3] == 0x00 {
+			return true
+		}
+		// 2001:db8::/32（文档示例）、2001:2::/48（基准测试）、2001:10::/28（ORCHID）
+		if ip[0] == 0x20 && ip[1] == 0x01 {
+			if ip[2] == 0x0d && ip[3] == 0xb8 {
+				return true
+			}
+			if ip[2] == 0x00 && ip[3] == 0x02 {
+				return true
+			}
+			if ip[2] == 0x00 && ip[3] >= 0x10 && ip[3] <= 0x1f {
+				return true
+			}
+		}
+		// 白名单兜底：仅放行 2000::/3 全球单播段，其余全部拦截。
+		// 覆盖：::/96（IPv4-compatible，可表示内网 IPv4 如 ::10.0.0.1）、
+		// 100::/64（discard）、fec0::/10（站点本地，已废弃）、
+		// 64:ff9b::/96（NAT64，可嵌入 IPv4）、0000::/8、4000::/3 等全部保留/未分配段
+		if (ip[0] & 0xe0) != 0x20 {
+			return true
+		}
+	}
+	return false
+}
+
+// 连接建立前校验目标 IP（DNS 解析后、TCP 连接前调用，可防 DNS rebinding）
+func dialControl(network, address string, c syscall.RawConn) error {
+	if allowPrivateNetwork {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("invalid IP address: %s", host)
+	}
+	if isBlockedIP(ip) {
+		return errSSRFBlocked
+	}
+	return nil
+}
+
 // 缓冲并重写 m3u8 响应
 func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, contentType string) {
 	defer resp.Body.Close()
 
-	rawBuf, err := io.ReadAll(resp.Body)
+	rawBuf, err := io.ReadAll(io.LimitReader(resp.Body, maxM3U8Bytes+1))
 	if err != nil {
 		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标服务器响应错误: " + err.Error()})
+		return
+	}
+	if len(rawBuf) > maxM3U8Bytes {
+		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标 m3u8 响应体过大，已拒绝处理"})
 		return
 	}
 

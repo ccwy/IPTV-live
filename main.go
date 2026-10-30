@@ -152,6 +152,7 @@ func serveStatic(w http.ResponseWriter, r *http.Request, pathname string) {
 	if mime == "" {
 		mime = "application/octet-stream"
 	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", mime)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -170,6 +171,7 @@ func sendJSON(w http.ResponseWriter, status int, obj any) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json; charset=utf-8")
 	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
@@ -181,4 +183,5 @@ func setCorsHeaders(w http.ResponseWriter) {
 	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	h.Set("Access-Control-Allow-Headers", "*")
+	h.Set("X-Content-Type-Options", "nosniff")
 }
