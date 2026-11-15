@@ -210,7 +210,7 @@ body {
       <button id="btn-mute" title="静音/取消静音">🔊</button>
       <input type="range" id="volume-slider" min="0" max="100" value="100" title="音量">
       <span id="live-badge">LIVE</span>
-      <button id="btn-aspect" title="画面比例">铺满</button>
+      <button id="btn-aspect" title="画面比例">适应</button>
       <button id="btn-fullscreen" title="全屏">⛶</button>
     </div>
   </div>
@@ -733,7 +733,7 @@ body {
     { name: '铺满', value: 'cover' },
     { name: '拉伸', value: 'fill' }
   ];
-  var aspectIndex = isMobile ? 0 : 1; // 移动端默认适应(contain)，桌面端默认铺满(cover)
+  var aspectIndex = 0; // 默认适应(contain)，点击可循环切换 铺满(cover)→拉伸(fill)
   function applyAspect() {
     video.style.objectFit = aspectModes[aspectIndex].value;
     btnAspect.textContent = aspectModes[aspectIndex].name;
