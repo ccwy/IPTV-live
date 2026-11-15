@@ -36,6 +36,53 @@ func isM3U8ContentType(contentType string) bool {
 	return strings.Contains(ct, "mpegurl")
 }
 
+// 视频分片和密钥的 URL 后缀白名单（Path 不含 query，后缀匹配可靠）
+var streamSegmentExts = []string{".ts", ".m4s", ".cmfv", ".mp4", ".key", ".aac"}
+
+// 明确非直播内容的 URL 后缀黑名单（快速拒绝，避免误判）
+var nonStreamExts = []string{
+	".html", ".htm", ".json", ".xml", ".png", ".jpg", ".jpeg", ".gif",
+	".svg", ".css", ".js", ".txt", ".pdf", ".zip", ".ico",
+	".woff", ".woff2", ".ttf", ".doc", ".docx", ".xls", ".xlsx",
+}
+
+// isAllowedStreamContent 判断非 m3u8 响应是否为合法的直播流分片或加密密钥。
+// 判断优先级：URL 后缀白名单 > URL 后缀黑名单 > Content-Type 白名单 > 默认拒绝。
+// 这样既能放行 .ts/.m4s 等明确分片，也能通过 Content-Type 放行无后缀但返回 video/* 的分片，
+// 同时拒绝 HTML/JSON/图片等非直播内容，防止 /proxy 被当作开放代理滥用。
+func isAllowedStreamContent(contentType, urlPath string) bool {
+	// 1. URL 后缀白名单：明确的视频分片或密钥后缀
+	for _, ext := range streamSegmentExts {
+		if strings.HasSuffix(urlPath, ext) {
+			return true
+		}
+	}
+
+	// 2. URL 后缀黑名单：明确的非直播内容
+	for _, ext := range nonStreamExts {
+		if strings.HasSuffix(urlPath, ext) {
+			return false
+		}
+	}
+
+	// 3. Content-Type 白名单：URL 后缀无法判断时，按媒体类型放行
+	if contentType != "" {
+		ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+		if strings.HasPrefix(ct, "video/") {
+			return true // video/mp2t, video/mp4 等
+		}
+		if ct == "application/octet-stream" {
+			return true // AES 密钥或二进制分片
+		}
+		if strings.Contains(ct, "mpegurl") {
+			return true // m3u8 变体（兜底）
+		}
+	}
+
+	// 4. 默认拒绝：无已知后缀且 Content-Type 不匹配 → 不是直播内容
+	return false
+}
+
 // 判断内容是否 m3u8（前 512 字符 trim 后以 m3u8 标签开头）
 func looksLikeM3U8(content string) bool {
 	if content == "" {

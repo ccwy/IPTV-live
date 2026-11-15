@@ -292,8 +292,13 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 	urlPath := strings.ToLower(target.Path)
 	if isM3U8ContentType(contentType) || strings.HasSuffix(urlPath, ".m3u8") || strings.HasSuffix(urlPath, ".m3u") {
 		handleM3U8Response(rec, resp, targetUrlStr, contentType) // 内部负责关闭 body
+	} else if isAllowedStreamContent(contentType, urlPath) {
+		streamResponse(rec, resp) // 视频分片/密钥，流式转发
 	} else {
-		streamResponse(rec, resp) // 流式转发（视频段等大文件），内部负责关闭 body
+		resp.Body.Close()
+		sendJSON(rec, http.StatusForbidden, map[string]string{
+			"error": "目标内容类型不允许代理（仅支持直播流 m3u8/m3u 和视频分片 ts/m4s/key）",
+		})
 	}
 }
 
@@ -434,39 +439,40 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 		return
 	}
 
-	// 编码容错：UTF-8 无效说明源内容非 UTF-8，
-	// 放弃重写直接透传原始字节（不重写比写坏好）
+	// 编码容错：UTF-8 无效说明源内容非 UTF-8。
+	// 若前 7 字节为 #EXTM3U（ASCII），判定为非 UTF-8 编码的 m3u8，放弃重写直接透传原始字节（不重写比写坏好）；
+	// 否则不是 m3u8 内容，拒绝代理，防止 /proxy 被滥用为开放代理。
 	if !utf8.Valid(rawBuf) {
-		setCorsHeaders(rec)
-		ct := contentType
-		if ct == "" {
-			ct = "application/vnd.apple.mpegurl"
+		if len(rawBuf) >= 7 && string(rawBuf[:7]) == "#EXTM3U" {
+			setCorsHeaders(rec)
+			ct := contentType
+			if ct == "" {
+				ct = "application/vnd.apple.mpegurl"
+			}
+			rec.Header().Set("Content-Type", ct)
+			rec.Header().Set("Content-Length", strconv.Itoa(len(rawBuf)))
+			rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+			rec.Header().Set("Pragma", "no-cache")
+			rec.WriteHeader(status304to200(resp.StatusCode))
+			_, _ = rec.Write(rawBuf)
+			return
 		}
-		rec.Header().Set("Content-Type", ct)
-		rec.Header().Set("Content-Length", strconv.Itoa(len(rawBuf)))
-		// 禁用浏览器缓存：直播播放列表必须每次拉取最新版本，旧播放列表会导致播放跳帧
-		rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-		rec.Header().Set("Pragma", "no-cache")
-		rec.WriteHeader(status304to200(resp.StatusCode))
-		_, _ = rec.Write(rawBuf)
+		sendJSON(rec, http.StatusForbidden, map[string]string{
+			"error": "目标内容不是有效的 m3u8 播放列表，拒绝代理",
+		})
 		return
 	}
 
 	body := string(rawBuf)
-	actuallyM3U8 := looksLikeM3U8(body)
-	if actuallyM3U8 {
-		body = rewriteM3U8(body, baseUrl)
+	if !looksLikeM3U8(body) {
+		sendJSON(rec, http.StatusForbidden, map[string]string{
+			"error": "目标内容不是有效的 m3u8 播放列表，拒绝代理",
+		})
+		return
 	}
+	body = rewriteM3U8(body, baseUrl)
 	setCorsHeaders(rec)
-	if actuallyM3U8 {
-		rec.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
-	} else {
-		ct := contentType
-		if ct == "" {
-			ct = "text/plain; charset=utf-8"
-		}
-		rec.Header().Set("Content-Type", ct)
-	}
+	rec.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
 	rec.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	// 禁用浏览器缓存：直播播放列表必须每次拉取最新版本，旧播放列表会导致播放跳帧
 	rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
