@@ -218,17 +218,9 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 
 	// 每次请求基于当前目标重建头（host/referer 随重定向更新）
 	forwardHeaders := baseHeaders.Clone()
-	// referer 改写：本站地址（localhost/本机IP）改写为目标源同域 referer，避免源服务器校验失败返回 403
-	if ref := forwardHeaders.Get("Referer"); ref != "" {
-		if refURL, refErr := url.Parse(ref); refErr == nil {
-			refHost := refURL.Hostname()
-			if isLocalHost(refHost) {
-				forwardHeaders.Set("Referer", target.Scheme+"://"+target.Host+"/")
-			}
-		} else {
-			forwardHeaders.Del("Referer")
-		}
-	}
+	// referer 改写：无论前端来自什么域名（localhost 或公网部署），一律改写为目标源同域 referer，
+	// 确保上游防盗链校验通过；代理的职责是隔离前端与上游，上游看到的永远是合法的同域请求
+	forwardHeaders.Set("Referer", target.Scheme+"://"+target.Host+"/")
 	forwardHeaders.Set("Accept-Encoding", "identity") // 避免目标返回压缩内容导致解码失败
 
 	// 构造上游 GET 请求；context 绑定客户端连接，客户端断开时自动中止上游请求
