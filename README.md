@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-默认端口 8080，启动后浏览器访问 http://localhost:8080 即可观看。
+默认端口 19890，启动后浏览器访问 http://localhost:19890 即可观看。
 
 本项目通过 Docker 部署，见下方 [Docker](#docker) 章节。
 
@@ -28,7 +28,7 @@
 
 ```bash
 docker build -t iptv-live -f docker/Dockerfile .
-docker run -d -p 8883:8080 iptv-live
+docker run -d -p 8883:19890 iptv-live
 ```
 
 ### 从 Release 下载镜像运行
@@ -38,10 +38,10 @@ docker run -d -p 8883:8080 iptv-live
 
 ```bash
 docker load -i iptv-live-amd64-v1.0.0.tar
-docker run -d -p 8883:8080 iptv-live:latest
+docker run -d -p 8883:19890 iptv-live:latest
 ```
 
-启动后访问 http://localhost:8080 即可观看。
+启动后访问 http://localhost:19890 即可观看。
 
 自定义端口（容器内 `PORT` 环境变量）：
 
@@ -87,11 +87,11 @@ services:
     image: iptv-live:latest          # 本地导入的镜像名，无需从远程仓库拉取
     container_name: iptv-live
     ports:
-      - "8883:8080"                  # 左侧为 NAS 访问端口，可按需修改
+      - "8883:19890"                  # 左侧为 NAS 访问端口，可按需修改
     environment:
       # 内置播放列表（JSON 数组，每项含 name 和 url）
       PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]'
-      # PORT: "8080"                 # 容器内端口，默认 8080；修改时需同步端口映射右侧
+      # PORT: "19890"                 # 容器内端口，默认 19890；修改时需同步端口映射右侧
     restart: unless-stopped
     network_mode: bridge             # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
 ```
@@ -117,7 +117,7 @@ services:
 `PLAYLISTS` 为 JSON 数组格式，每项包含 `name`（显示名称）和 `url`（M3U 地址）：
 
 ```bash
-docker run -d -p 8883:8080 \
+docker run -d -p 8883:19890 \
   -e PLAYLISTS='[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]' \
   iptv-live:latest
 ```
@@ -129,7 +129,7 @@ PLAYLISTS=[{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳�
 ```
 
 ```bash
-docker run -d -p 8080:8080 --env-file playlist.env iptv-live:latest
+docker run -d -p 19890:19890 --env-file playlist.env iptv-live:latest
 ```
 
 说明：

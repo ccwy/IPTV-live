@@ -12,7 +12,7 @@ import (
 
 // 配置常量
 const (
-	defaultPort = "8080"
+	defaultPort = "19890"
 )
 
 // 播放列表项（/config 接口返回结构）
