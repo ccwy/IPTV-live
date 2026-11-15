@@ -105,12 +105,20 @@ func routeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch pathname {
-	case "/proxy", "/playlist":
-		// 代理处理（两者行为相同）
+	case "/proxy":
+		// 代理处理（通用代理，需显式传 url 参数）
 		handleProxy(w, r)
+	case "/playlist":
+		// 内置播放列表代理：按 id 解析服务端配置的 URL，URL 不暴露给客户端
+		handleBuiltinPlaylist(w, r)
 	case "/config":
+		// 返回播放列表信息，仅含 id 和 name，不含 url（防止源地址明文暴露）
+		safePlaylists := make([]map[string]any, len(builtinPlaylists))
+		for i, p := range builtinPlaylists {
+			safePlaylists[i] = map[string]any{"id": i, "name": p.Name}
+		}
 		sendJSON(w, http.StatusOK, map[string]any{
-			"playlists": builtinPlaylists,
+			"playlists": safePlaylists,
 		})
 	case "/health":
 		// 健康检查端点（供外部探测，如编排平台或 docker healthcheck）

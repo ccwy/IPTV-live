@@ -260,12 +260,20 @@ body {
     return PROXY_PREFIX + encodeURIComponent(u);
   }
 
-  // 根据 URL 匹配播放列表名称（服务端+自定义），未匹配返回空字符串
-  function matchPlaylistName(url) {
-    if (!url) return '';
-    var all = serverPlaylists.concat(customPlaylists);
-    for (var i = 0; i < all.length; i++) {
-      if (all[i].url === url) return all[i].name;
+  // 根据 key 匹配播放列表名称（服务端 builtin:N + 自定义 url/local://），未匹配返回空字符串
+  function matchPlaylistName(key) {
+    if (!key) return '';
+    // 服务端列表按 builtin:N 匹配
+    if (key.indexOf('builtin:') === 0) {
+      var idx = parseInt(key.slice(8), 10);
+      for (var i = 0; i < serverPlaylists.length; i++) {
+        if (serverPlaylists[i].id === idx) return serverPlaylists[i].name;
+      }
+      return '';
+    }
+    // 自定义列表按 url 匹配
+    for (var i = 0; i < customPlaylists.length; i++) {
+      if (customPlaylists[i].url === key) return customPlaylists[i].name;
     }
     return '';
   }
@@ -377,6 +385,35 @@ body {
         addCustomPlaylist(url);
         renderPlaylists();
         setActivePlaylistBtn(url);
+      })
+      .catch(function(err) {
+        setStatus('加载失败: ' + err.message, 'status-error');
+      })
+      .finally(function() { loadBtn.disabled = false; });
+  }
+
+  // 加载服务端内置播放列表（按 id 索引，URL 不暴露给浏览器）
+  function loadPlaylistById(id, name) {
+    var key = 'builtin:' + id;
+    if (!name) name = matchPlaylistName(key);
+    setStatus('正在加载播放列表...', 'status-loading');
+    loadBtn.disabled = true;
+    fetch('/playlist?id=' + id)
+      .then(function(resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.text();
+      })
+      .then(function(text) {
+        var channels = parseM3U(text);
+        if (channels.length === 0) throw new Error('未解析到任何频道');
+        allChannels = channels;
+        currentPlaylistName = name || '';
+        buildGroupSelect();
+        renderChannelList();
+        setStatus('已加载 ' + channels.length + ' 个频道', 'status-ok');
+        try { localStorage.setItem('iptv-playlist-url', key); } catch(e) {}
+        renderPlaylists();
+        setActivePlaylistBtn(key);
       })
       .catch(function(err) {
         setStatus('加载失败: ' + err.message, 'status-error');
@@ -820,20 +857,30 @@ body {
     title.textContent = '播放列表';
     var list = document.createElement('div');
     list.className = 'playlists-list';
-    var all = serverPlaylists.concat(customPlaylists);
-    all.forEach(function(p) {
-      // 判断是否为自定义项（URL 不在服务端列表中即为自定义项，可删除）
-      var isCustom = true;
-      for (var i = 0; i < serverPlaylists.length; i++) {
-        if (serverPlaylists[i].url === p.url) { isCustom = false; break; }
-      }
+    // 服务端播放列表：按 id 加载，URL 不暴露给浏览器
+    serverPlaylists.forEach(function(p) {
       var item = document.createElement('span');
       item.className = 'playlist-item';
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'playlist-btn';
       btn.textContent = p.name;
-      btn.setAttribute('data-url', p.url);
+      btn.setAttribute('data-key', 'builtin:' + p.id);
+      btn.addEventListener('click', function() {
+        loadPlaylistById(p.id, p.name);
+      });
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+    // 用户自定义播放列表：可删除
+    customPlaylists.forEach(function(p) {
+      var item = document.createElement('span');
+      item.className = 'playlist-item';
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'playlist-btn';
+      btn.textContent = p.name;
+      btn.setAttribute('data-key', p.url);
       btn.addEventListener('click', function() {
         if (p.url.indexOf('local://') === 0) {
           loadPlaylistFromLocal(p.url, p.name);
@@ -843,45 +890,52 @@ body {
         }
       });
       item.appendChild(btn);
-      if (isCustom) {
-        var del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'playlist-del';
-        del.title = '删除该自定义播放列表';
-        del.textContent = '×';
-        del.addEventListener('click', function(e) {
-          e.stopPropagation();
-          removeCustomPlaylist(p.url);
-        });
-        item.appendChild(del);
-      }
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'playlist-del';
+      del.title = '删除该自定义播放列表';
+      del.textContent = '×';
+      del.addEventListener('click', function(e) {
+        e.stopPropagation();
+        removeCustomPlaylist(p.url);
+      });
+      item.appendChild(del);
       list.appendChild(item);
     });
     playlistWrap.appendChild(title);
     playlistWrap.appendChild(list);
   }
 
-  // 高亮当前已加载的播放列表按钮（URL不匹配时取消全部高亮）
-  function setActivePlaylistBtn(url) {
+  // 高亮当前已加载的播放列表按钮（key 不匹配时取消全部高亮）
+  function setActivePlaylistBtn(key) {
     var btns = playlistWrap.querySelectorAll('.playlist-btn');
     for (var i = 0; i < btns.length; i++) {
-      btns[i].classList.toggle('active', btns[i].getAttribute('data-url') === url);
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-key') === key);
     }
   }
 
   /* ===== 初始化 ===== */
-  // 优先级：savedUrl > 播放列表第一项（服务端+自定义）；都无则输入框留空，不自动加载
+  // 优先级：savedKey > 播放列表第一项（服务端优先，其次自定义）；都无则输入框留空，不自动加载
   function initStartup() {
-    var savedUrl = '';
-    try { savedUrl = localStorage.getItem('iptv-playlist-url') || ''; } catch(e) {}
-    var all = serverPlaylists.concat(customPlaylists);
-    var defaultUrl = all.length ? all[0].url : '';
-    // 恢复优先:上次加载的地址(含本地上传的 local:// 伪 URL);否则取列表第一项
-    var target = savedUrl || defaultUrl;
+    var savedKey = '';
+    try { savedKey = localStorage.getItem('iptv-playlist-url') || ''; } catch(e) {}
+    // 默认取值：服务端列表第一项的 builtin:key，否则自定义列表第一项的 url
+    var defaultKey = '';
+    if (serverPlaylists.length) {
+      defaultKey = 'builtin:' + serverPlaylists[0].id;
+    } else if (customPlaylists.length) {
+      defaultKey = customPlaylists[0].url;
+    }
+    var target = savedKey || defaultKey;
     if (!target) return; // 无任何列表,输入框留空,不自动加载
-    if (target.indexOf('local://') === 0) {
+    if (target.indexOf('builtin:') === 0) {
+      // 服务端内置播放列表：按 id 加载，URL 不暴露给浏览器
+      var idx = parseInt(target.slice(8), 10);
+      loadPlaylistById(idx, matchPlaylistName(target));
+    } else if (target.indexOf('local://') === 0) {
       loadPlaylistFromLocal(target, matchPlaylistName(target));
     } else {
+      // 用户自定义在线列表：URL 是用户自己输入的，填入输入框便于编辑
       urlInput.value = target;
       loadPlaylistFromUrl(target, matchPlaylistName(target));
     }
