@@ -117,12 +117,10 @@ func (r *responseRecorder) Flush() {
 	}
 }
 
-// 代理请求处理
+// 代理请求处理（通用代理，客户端通过 url 参数指定目标）
 func handleProxy(w http.ResponseWriter, r *http.Request) {
-	// 包装响应以跟踪写头状态
 	rec := &responseRecorder{ResponseWriter: w}
 
-	// 仅允许 GET/HEAD 方法（OPTIONS 已在 routeHandler 全局处理）
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		rec.Header().Set("Allow", "GET, HEAD")
 		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
@@ -137,6 +135,39 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	proxyByTargetUrl(rec, r, targetUrlStr)
+}
+
+// 内置播放列表代理：通过 id 索引查找服务端配置的播放列表 URL，代理请求
+// 客户端只需传 id 参数，真实 URL 永不离开服务端，防止源地址明文暴露
+func handleBuiltinPlaylist(w http.ResponseWriter, r *http.Request) {
+	rec := &responseRecorder{ResponseWriter: w}
+
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		rec.Header().Set("Allow", "GET, HEAD")
+		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
+		return
+	}
+
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		sendJSON(rec, http.StatusBadRequest, map[string]string{
+			"error": "缺少 id 参数。用法: /playlist?id=<内置播放列表索引>",
+		})
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id < 0 || id >= len(builtinPlaylists) {
+		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的播放列表 id: " + idStr})
+		return
+	}
+
+	proxyByTargetUrl(rec, r, builtinPlaylists[id].URL)
+}
+
+// 代理核心逻辑：解析目标 URL 并转发请求（供 handleProxy 和 handleBuiltinPlaylist 共用）
+func proxyByTargetUrl(rec *responseRecorder, r *http.Request, targetUrlStr string) {
 	target, err := url.Parse(targetUrlStr)
 	if err != nil {
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的URL: " + targetUrlStr})
