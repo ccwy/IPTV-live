@@ -115,7 +115,7 @@ jobs:
                - `iptv-live-amd64-${{ needs.build.outputs.tag }}.tar` — linux/amd64
                - `iptv-live-arm64-${{ needs.build.outputs.tag }}.tar` — linux/arm64
             2. 加载镜像：`docker load -i iptv-live-amd64-${{ needs.build.outputs.tag }}.tar`
-            3. 运行容器：`docker run -d -p 8883:8080 iptv-live:latest`
+            3. 运行容器：`docker run -d -p 8883:19890 iptv-live:latest`
             4. 访问 http://localhost:8883 即可观看
           files: |
             iptv-live-amd64-*.tar
