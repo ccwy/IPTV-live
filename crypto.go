@@ -4,32 +4,22 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"log"
-	"os"
 )
 
 // AES-256-GCM 密钥（32 字节）
 var aesKey []byte
 
-// 初始化 AES 密钥：
-//   - 环境变量 STREAM_KEY 非空时，SHA256 派生 32 字节密钥（重启后密文仍有效）
-//   - 未设置时，随机生成 32 字节（更安全，但重启后旧密文失效，需重新加载播放列表）
+// 初始化 AES 密钥：每次启动随机生成 32 字节
+// 重启后旧密文自动失效，用户需重新加载播放列表（刷新页面即可）
 func initAesKey() {
-	key := os.Getenv("STREAM_KEY")
-	if len(key) > 0 {
-		h := sha256.Sum256([]byte(key))
-		aesKey = h[:]
-		log.Println("流地址加密密钥: 从环境变量 STREAM_KEY 派生")
-	} else {
-		aesKey = make([]byte, 32)
-		if _, err := rand.Read(aesKey); err != nil {
-			log.Fatal("生成 AES 密钥失败: " + err.Error())
-		}
-		log.Println("流地址加密密钥: 随机生成（重启后旧 /stream 链接失效）")
+	aesKey = make([]byte, 32)
+	if _, err := rand.Read(aesKey); err != nil {
+		log.Fatal("生成 AES 密钥失败: " + err.Error())
 	}
+	log.Println("流地址加密密钥: 随机生成（重启后旧 /stream 链接自动失效）")
 }
 
 // encryptURL 用 AES-256-GCM 加密 URL，返回 URL-safe base64 编码的密文
