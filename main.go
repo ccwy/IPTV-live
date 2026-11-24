@@ -79,6 +79,7 @@ func main() {
 		port = defaultPort
 	}
 	loadPlaylists()
+	initAesKey()
 
 	http.HandleFunc("/", routeHandler)
 
@@ -105,6 +106,9 @@ func routeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch pathname {
+	case "/stream":
+		// 加密流代理：通过 AES 加密参数 s 传递目标 URL，真实地址不暴露给客户端
+		handleStream(w, r)
 	case "/proxy":
 		// 代理处理（通用代理，需显式传 url 参数）
 		handleProxy(w, r)

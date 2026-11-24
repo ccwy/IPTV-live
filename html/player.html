@@ -257,6 +257,8 @@ body {
     if (!u) return '';
     if (u.indexOf('/proxy?url=') === 0) return u;
     if (u.indexOf(location.origin + '/proxy') === 0) return u;
+    if (u.indexOf('/stream?s=') === 0) return u;
+    if (u.indexOf(location.origin + '/stream') === 0) return u;
     return PROXY_PREFIX + encodeURIComponent(u);
   }
 

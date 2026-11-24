@@ -120,7 +120,7 @@ func rewriteM3U8(content, baseUrl string) string {
 		// 非注释非空行 = URL 行（媒体段、子播放列表、或 m3u 频道流 URL）
 		absolute := resolveUrl(trimmed, baseUrl)
 		if absolute != "" {
-			rewritten[i] = "/proxy?url=" + encodeURIComponent(absolute)
+			rewritten[i] = "/stream?s=" + encryptURL(absolute)
 		} else {
 			rewritten[i] = line
 		}
@@ -136,7 +136,7 @@ func rewriteAttributes(line, baseUrl string) string {
 		uri := match[len(`URI="`) : len(match)-len(`"`)]
 		absolute := resolveUrl(uri, baseUrl)
 		if absolute != "" {
-			return `URI="/proxy?url=` + encodeURIComponent(absolute) + `"`
+			return `URI="/stream?s=` + encryptURL(absolute) + `"`
 		}
 		return match
 	})
@@ -149,6 +149,9 @@ func resolveUrl(relative, baseUrl string) string {
 	}
 	// 已经是代理 URL 就不重复处理
 	if strings.HasPrefix(relative, "/proxy?url=") {
+		return ""
+	}
+	if strings.HasPrefix(relative, "/stream?s=") {
 		return ""
 	}
 	relURL, err := url.Parse(relative)

@@ -173,6 +173,38 @@ func handleBuiltinPlaylist(w http.ResponseWriter, r *http.Request) {
 }
 
 // 代理核心逻辑：解析目标 URL 并转发请求（供 handleProxy 和 handleBuiltinPlaylist 共用）
+// 加密流代理处理：客户端通过 s 参数传递 AES 加密的目标 URL
+// 后端解密后代理请求，真实 URL 永不以明文出现在客户端请求中
+func handleStream(w http.ResponseWriter, r *http.Request) {
+	rec := &responseRecorder{ResponseWriter: w}
+
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		rec.Header().Set("Allow", "GET, HEAD")
+		log.Printf("[STREAM] 405 方法不允许 /stream method=%s", r.Method)
+		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
+		return
+	}
+
+	s := r.URL.Query().Get("s")
+	if s == "" {
+		log.Printf("[STREAM] 400 缺少 s 参数 /stream")
+		sendJSON(rec, http.StatusBadRequest, map[string]string{
+			"error": "缺少 s 参数",
+		})
+		return
+	}
+
+	targetUrlStr, err := decryptURL(s)
+	if err != nil {
+		log.Printf("[STREAM] 400 解密失败 err=%v", err)
+		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的流参数"})
+		return
+	}
+
+	log.Printf("[STREAM] 解密成功，代理请求 url=%s client=%s", targetUrlStr, r.RemoteAddr)
+	proxyByTargetUrl(rec, r, targetUrlStr)
+}
+
 func proxyByTargetUrl(rec *responseRecorder, r *http.Request, targetUrlStr string) {
 	target, err := url.Parse(targetUrlStr)
 	if err != nil {
