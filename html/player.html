@@ -145,11 +145,13 @@ body {
 #player-controls button:hover { color: #e94560; }
 #volume-slider { width: clamp(60px, 10vw, 100px); accent-color: #e94560; cursor: pointer; }
 #live-badge {
-  margin-left: auto; background: #e94560; color: #fff;
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  background: #e94560; color: #fff;
   font-size: clamp(9px, 1.2vw, 11px); padding: 2px 8px; border-radius: 10px;
   font-weight: 600; letter-spacing: 1px; user-select: none; white-space: nowrap;
+  pointer-events: none;
 }
-#btn-aspect { font-size: clamp(11px, 1.6vw, 13px); }
+#btn-aspect { margin-left: auto; font-size: clamp(11px, 1.6vw, 13px); }
 .status-loading { color: #e94560; }
 .status-error { color: #ff0000; }
 .status-ok { color: #51cf66; }
@@ -217,8 +219,8 @@ body {
       <button id="btn-play" title="播放/暂停">▶</button>
       <button id="btn-mute" title="静音/取消静音">🔊</button>
       <input type="range" id="volume-slider" min="0" max="100" value="100" title="音量">
-      <span id="live-badge">LIVE</span>
       <select id="line-select" class="hidden" title="线路切换"></select>
+      <span id="live-badge">LIVE</span>
       <button id="btn-aspect" title="画面比例">适应</button>
       <button id="btn-fullscreen" title="全屏">⛶</button>
     </div>
@@ -613,7 +615,7 @@ body {
         info.appendChild(gp);
         li.appendChild(info);
 
-        li.addEventListener('click', function() { playChannel(ch); });
+        li.addEventListener('click', function() { playChannel(ch, 0); });
         frag.appendChild(li);
       })(list[i]);
     }
@@ -736,9 +738,10 @@ body {
       });
       hls.on(Hls.Events.ERROR, function(evt, data) {
         if (!data.fatal) return;
+        // 任一线路致命失败：先自动切换到尚未试过的下一条线路（默认从第1源起，失败依次切换）
+        if (tryNextLine(ch, data.details)) return;
+        // 所有线路均尝试过，再按错误类型做最后恢复
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          // 多线路自动切换：当前线路致命失败则尝试尚未试过的其他线路，都试过才降级重试
-          if (tryNextLine(ch, data.details)) return;
           setStatus('网络错误，尝试恢复: ' + data.details, 'status-error');
           hls.startLoad();
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
