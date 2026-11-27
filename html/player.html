@@ -121,21 +121,14 @@ body {
   text-overflow: ellipsis;
 }
 #channel-name-overlay.show { opacity: 1; }
-/* 线路切换条：同一频道的多个源地址，仅在多线路时显示 */
-#line-switch {
-  position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
-  display: flex; gap: 6px; max-width: 90%; overflow-x: auto; padding: 2px;
-  z-index: 16; scrollbar-width: none;
+/* 线路选择下拉：仅在当前频道有多线路时显示，随底部控制条显隐 */
+#line-select {
+  background: rgba(0,0,0,.5); color: #fff; border: 1px solid #1a4a7a;
+  border-radius: 6px; padding: 2px 6px; font-size: clamp(10px, 1.4vw, 12px);
+  cursor: pointer; outline: none; max-width: 110px;
 }
-#line-switch::-webkit-scrollbar { display: none; }
-#line-switch.hidden { display: none; }
-#line-switch .line-btn {
-  padding: 3px 10px; border-radius: 12px; border: 1px solid #1a4a7a;
-  background: rgba(0,0,0,.65); color: #a0c0e0; font-size: 12px; cursor: pointer;
-  white-space: nowrap; transition: background .2s, color .2s, border-color .2s;
-}
-#line-switch .line-btn:hover { background: #1a4a7a; color: #fff; }
-#line-switch .line-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
+#line-select.hidden { display: none; }
+#line-select option { background: #1a1a2e; color: #e0e0e0; }
 /* ===== 自建直播控制条 ===== */
 #player-controls {
   position: absolute; bottom: 0; left: 0; right: 0;
@@ -156,7 +149,7 @@ body {
   font-size: clamp(9px, 1.2vw, 11px); padding: 2px 8px; border-radius: 10px;
   font-weight: 600; letter-spacing: 1px; user-select: none; white-space: nowrap;
 }
-#btn-aspect { margin-left: auto; font-size: clamp(11px, 1.6vw, 13px); }
+#btn-aspect { font-size: clamp(11px, 1.6vw, 13px); }
 .status-loading { color: #e94560; }
 .status-error { color: #ff0000; }
 .status-ok { color: #51cf66; }
@@ -168,7 +161,6 @@ body {
   #sidebar.collapsed { margin-left: calc(-1 * clamp(220px, 30vw, 280px)); }
   #sidebar-toggle-float { display: block; }
   #channel-name-overlay { font-size: 12px; top: 50px; }
-  #line-switch { top: 84px; }
   /* 触摸友好：增大频道项点击区域，缩小缩略图与字体 */
   .channel-item { padding: 12px 14px; }
   .channel-logo { width: 36px; height: 36px; min-width: 36px; }
@@ -221,12 +213,12 @@ body {
   <div id="player-area">
     <video id="video" autoplay playsinline></video>
     <div id="channel-name-overlay"></div>
-    <div id="line-switch" class="hidden"></div>
     <div id="player-controls">
       <button id="btn-play" title="播放/暂停">▶</button>
       <button id="btn-mute" title="静音/取消静音">🔊</button>
       <input type="range" id="volume-slider" min="0" max="100" value="100" title="音量">
       <span id="live-badge">LIVE</span>
+      <select id="line-select" class="hidden" title="线路切换"></select>
       <button id="btn-aspect" title="画面比例">适应</button>
       <button id="btn-fullscreen" title="全屏">⛶</button>
     </div>
@@ -253,7 +245,7 @@ body {
   var channelCount = document.getElementById('channel-count');
   var video = document.getElementById('video');
   var channelNameOverlay = document.getElementById('channel-name-overlay');
-  var lineSwitch = document.getElementById('line-switch');
+  var lineSelect = document.getElementById('line-select');
 
   // 状态
   var allChannels = [];
@@ -636,28 +628,36 @@ body {
     if (hls) { try { hls.destroy(); } catch(e) {} hls = null; }
   }
 
-  // 隐藏线路切换条
+  // 隐藏线路选择下拉
   function hideLineSwitch() {
-    if (!lineSwitch) return;
-    lineSwitch.classList.add('hidden');
-    lineSwitch.innerHTML = '';
+    if (!lineSelect) return;
+    lineSelect.classList.add('hidden');
+    lineSelect.innerHTML = '';
   }
 
-  // 渲染线路切换按钮（仅当当前频道有多条线路时显示）
+  // 渲染线路选择下拉（仅当当前频道有多条线路时显示，随底部控制条显隐）
   function renderLineSwitch(ch) {
-    if (!lineSwitch) return;
+    if (!lineSelect) return;
     if (!ch || !ch.lines || ch.lines.length <= 1) { hideLineSwitch(); return; }
-    lineSwitch.innerHTML = '';
+    lineSelect.innerHTML = '';
     for (var i = 0; i < ch.lines.length; i++) {
-      (function(idx) {
-        var b = document.createElement('button');
-        b.className = 'line-btn' + (idx === ch.lineIndex ? ' active' : '');
-        b.textContent = '线路' + (idx + 1);
-        b.addEventListener('click', function() { playChannel(ch, idx); });
-        lineSwitch.appendChild(b);
-      })(i);
+      var opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = '线路' + (i + 1);
+      lineSelect.appendChild(opt);
     }
-    lineSwitch.classList.remove('hidden');
+    lineSelect.value = String(ch.lineIndex || 0);
+    lineSelect.classList.remove('hidden');
+  }
+
+  // 底部线路下拉切换
+  if (lineSelect) {
+    lineSelect.addEventListener('change', function() {
+      if (currentChannel && currentChannel.lines && currentChannel.lines.length > 1) {
+        var idx = parseInt(lineSelect.value, 10);
+        if (!isNaN(idx)) playChannel(currentChannel, idx);
+      }
+    });
   }
 
   // 多线路自动切换：当前线路致命失败时，切换到尚未尝试过的下一条线路（全部试过返回 false）
