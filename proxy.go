@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -137,14 +136,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		rec.Header().Set("Allow", "GET, HEAD")
-		log.Printf("[PROXY] 405 方法不允许 /proxy method=%s", r.Method)
+		logWarnf("[PROXY] 405 方法不允许 /proxy method=%s", r.Method)
 		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
 		return
 	}
 
 	targetUrlStr := r.URL.Query().Get("url")
 	if targetUrlStr == "" {
-		log.Printf("[PROXY] 400 缺少 url 参数 /proxy")
+		logWarnf("[PROXY] 400 缺少 url 参数 /proxy")
 		sendJSON(rec, http.StatusBadRequest, map[string]string{
 			"error": "缺少 url 参数。用法: /proxy?url=<encodeURIComponent(目标URL)>",
 		})
@@ -161,14 +160,14 @@ func handleBuiltinPlaylist(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		rec.Header().Set("Allow", "GET, HEAD")
-		log.Printf("[PROXY] 405 方法不允许 /playlist method=%s", r.Method)
+		logWarnf("[PROXY] 405 方法不允许 /playlist method=%s", r.Method)
 		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
 		return
 	}
 
 	idStr := r.URL.Query().Get("id")
 	if idStr == "" {
-		log.Printf("[PROXY] 400 缺少 id 参数 /playlist")
+		logWarnf("[PROXY] 400 缺少 id 参数 /playlist")
 		sendJSON(rec, http.StatusBadRequest, map[string]string{
 			"error": "缺少 id 参数。用法: /playlist?id=<内置播放列表索引>",
 		})
@@ -177,7 +176,7 @@ func handleBuiltinPlaylist(w http.ResponseWriter, r *http.Request) {
 
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id < 0 || id >= len(builtinPlaylists) {
-		log.Printf("[PROXY] 400 无效播放列表 id=%s", idStr)
+		logWarnf("[PROXY] 400 无效播放列表 id=%s", idStr)
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的播放列表 id: " + idStr})
 		return
 	}
@@ -193,14 +192,14 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		rec.Header().Set("Allow", "GET, HEAD")
-		log.Printf("[STREAM] 405 方法不允许 /stream method=%s", r.Method)
+		logWarnf("[STREAM] 405 方法不允许 /stream method=%s", r.Method)
 		sendJSON(rec, http.StatusMethodNotAllowed, map[string]string{"error": "仅支持 GET/HEAD 方法"})
 		return
 	}
 
 	s := r.URL.Query().Get("s")
 	if s == "" {
-		log.Printf("[STREAM] 400 缺少 s 参数 /stream")
+		logWarnf("[STREAM] 400 缺少 s 参数 /stream")
 		sendJSON(rec, http.StatusBadRequest, map[string]string{
 			"error": "缺少 s 参数",
 		})
@@ -209,19 +208,19 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 
 	targetUrlStr, err := decryptURL(s)
 	if err != nil {
-		log.Printf("[STREAM] 400 解密失败 err=%v", err)
+		logWarnf("[STREAM] 400 解密失败 err=%v", err)
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的流参数"})
 		return
 	}
 
-	log.Printf("[STREAM] 解密成功，代理请求 url=%s client=%s", targetUrlStr, r.RemoteAddr)
+	logDebugf("[STREAM] 解密成功，代理请求 url=%s client=%s", targetUrlStr, r.RemoteAddr)
 	proxyByTargetUrl(rec, r, targetUrlStr)
 }
 
 func proxyByTargetUrl(rec *responseRecorder, r *http.Request, targetUrlStr string) {
 	target, err := url.Parse(targetUrlStr)
 	if err != nil {
-		log.Printf("[PROXY] 400 无效URL url=%s err=%v", targetUrlStr, err)
+		logWarnf("[PROXY] 400 无效URL url=%s err=%v", targetUrlStr, err)
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的URL: " + targetUrlStr})
 		return
 	}
@@ -233,9 +232,9 @@ func proxyByTargetUrl(rec *responseRecorder, r *http.Request, targetUrlStr strin
 	// 构造基础转发头（含 referer/cookie），具体请求头在 fetchUpstream 中按目标重建
 	baseHeaders := buildForwardHeaders(r)
 	requestStart := time.Now()
-	log.Printf("[PROXY] 请求开始 url=%s client=%s", targetUrlStr, r.RemoteAddr)
+	logDebugf("[PROXY] 请求开始 url=%s client=%s", targetUrlStr, r.RemoteAddr)
 	fetchUpstream(rec, r, targetUrlStr, 0, baseHeaders)
-	log.Printf("[PROXY] 请求结束 url=%s 耗时=%s", targetUrlStr, time.Since(requestStart))
+	logDebugf("[PROXY] 请求结束 url=%s 耗时=%s", targetUrlStr, time.Since(requestStart))
 }
 
 // 构造转发请求头：复制必要头（含 referer/cookie），User-Agent 默认用 APTV 真实 UA，可用 UPSTREAM_UA 覆盖
@@ -254,7 +253,7 @@ func buildForwardHeaders(r *http.Request) http.Header {
 // 递归请求上游：跟随 301/302/303/307/308 重定向，最多 5 次
 func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, depth int, baseHeaders http.Header) {
 	if depth > 5 {
-		log.Printf("[PROXY] 502 重定向次数过多(>5) url=%s", targetUrlStr)
+		logWarnf("[PROXY] 502 重定向次数过多(>5) url=%s", targetUrlStr)
 		sendJSON(rec, http.StatusBadGateway, map[string]string{
 			"error": "重定向次数过多",
 			"url":   targetUrlStr,
@@ -264,12 +263,12 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 
 	target, err := url.Parse(targetUrlStr)
 	if err != nil {
-		log.Printf("[PROXY] 400 无效重定向URL url=%s err=%v", targetUrlStr, err)
+		logWarnf("[PROXY] 400 无效重定向URL url=%s err=%v", targetUrlStr, err)
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的重定向URL: " + targetUrlStr})
 		return
 	}
 	if target.Scheme != "http" && target.Scheme != "https" {
-		log.Printf("[PROXY] 400 重定向非http/https scheme=%s url=%s", target.Scheme, targetUrlStr)
+		logWarnf("[PROXY] 400 重定向非http/https scheme=%s url=%s", target.Scheme, targetUrlStr)
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "重定向目标仅支持 http/https 协议"})
 		return
 	}
@@ -284,7 +283,7 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 	// 构造上游 GET 请求；context 绑定客户端连接，客户端断开时自动中止上游请求
 	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetUrlStr, nil)
 	if err != nil {
-		log.Printf("[PROXY] 400 请求构造失败 url=%s err=%v", targetUrlStr, err)
+		logWarnf("[PROXY] 400 请求构造失败 url=%s err=%v", targetUrlStr, err)
 		sendJSON(rec, http.StatusBadRequest, map[string]string{"error": "无效的请求URL: " + targetUrlStr})
 		return
 	}
@@ -295,24 +294,24 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 	if err != nil {
 		// 客户端已断开则不再写响应
 		if r.Context().Err() != nil {
-			log.Printf("[PROXY] 客户端已断开 url=%s err=%v", targetUrlStr, r.Context().Err())
+			logDebugf("[PROXY] 客户端已断开 url=%s err=%v", targetUrlStr, r.Context().Err())
 			return
 		}
 		// SSRF 拦截：目标地址属于内网/保留地址段
 		if errors.Is(err, errSSRFBlocked) {
-			log.Printf("[SSRF] 403 拦截内网地址 url=%s", targetUrlStr)
+			logWarnf("[SSRF] 403 拦截内网地址 url=%s", targetUrlStr)
 			sendJSON(rec, http.StatusForbidden, map[string]string{
 				"error": "目标地址属于内网或保留地址段，禁止代理访问（如需代理局域网源，设置环境变量 ALLOW_PRIVATE_NETWORK=true）",
 			})
 			return
 		}
 		if isTimeoutErr(err) {
-			log.Printf("[PROXY] 504 上游超时 url=%s err=%v", targetUrlStr, err)
+			logWarnf("[PROXY] 504 上游超时 url=%s err=%v", targetUrlStr, err)
 			sendJSON(rec, http.StatusGatewayTimeout, map[string]string{
 				"error": "连接目标服务器超时(60s): " + targetUrlStr,
 			})
 		} else {
-			log.Printf("[PROXY] 502 无法连接目标服务器 url=%s err=%v", targetUrlStr, err)
+			logWarnf("[PROXY] 502 无法连接目标服务器 url=%s err=%v", targetUrlStr, err)
 			sendJSON(rec, http.StatusBadGateway, map[string]string{
 				"error": "无法连接目标服务器: " + err.Error(),
 				"url":   targetUrlStr,
@@ -327,7 +326,7 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 		_, _ = io.Copy(io.Discard, resp.Body) // 丢弃重定向响应体，不转发 body
 		resp.Body.Close()
 		if location == "" {
-			log.Printf("[PROXY] 502 重定向缺少Location头 url=%s status=%d", targetUrlStr, resp.StatusCode)
+			logWarnf("[PROXY] 502 重定向缺少Location头 url=%s status=%d", targetUrlStr, resp.StatusCode)
 			sendJSON(rec, http.StatusBadGateway, map[string]string{
 				"error": "重定向响应缺少 Location 头",
 				"url":   targetUrlStr,
@@ -336,7 +335,7 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 		}
 		nextUrl, err := resolveLocation(location, targetUrlStr)
 		if err != nil {
-			log.Printf("[PROXY] 502 无效重定向地址 location=%s base=%s err=%v", location, targetUrlStr, err)
+			logWarnf("[PROXY] 502 无效重定向地址 location=%s base=%s err=%v", location, targetUrlStr, err)
 			sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "无效的重定向地址: " + location})
 			return
 		}
@@ -344,7 +343,7 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 		return
 	}
 
-	log.Printf("[PROXY] 上游响应 status=%d content-type=%s url=%s", resp.StatusCode, resp.Header.Get("Content-Type"), targetUrlStr)
+	logDebugf("[PROXY] 上游响应 status=%d content-type=%s url=%s", resp.StatusCode, resp.Header.Get("Content-Type"), targetUrlStr)
 
 	// 判断是否需要重写 m3u8 内容（Content-Type 或 URL 后缀）
 	contentType := resp.Header.Get("Content-Type")
@@ -355,7 +354,7 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 		streamResponse(rec, resp) // 视频分片/密钥，流式转发
 	} else {
 		resp.Body.Close()
-		log.Printf("[PROXY] 403 内容类型不允许代理 content-type=%s url=%s", contentType, targetUrlStr)
+		logWarnf("[PROXY] 403 内容类型不允许代理 content-type=%s url=%s", contentType, targetUrlStr)
 		sendJSON(rec, http.StatusForbidden, map[string]string{
 			"error": "目标内容类型不允许代理（仅支持直播流 m3u8/m3u 和视频分片 ts/m4s/key）",
 		})
@@ -499,12 +498,12 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 
 	rawBuf, err := io.ReadAll(io.LimitReader(resp.Body, maxM3U8Bytes+1))
 	if err != nil {
-		log.Printf("[M3U8] 502 读取响应体失败 url=%s err=%v", baseUrl, err)
+		logWarnf("[M3U8] 502 读取响应体失败 url=%s err=%v", baseUrl, err)
 		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标服务器响应错误: " + err.Error()})
 		return
 	}
 	if len(rawBuf) > maxM3U8Bytes {
-		log.Printf("[M3U8] 502 响应体过大 url=%s size=%d max=%d", baseUrl, len(rawBuf), maxM3U8Bytes)
+		logWarnf("[M3U8] 502 响应体过大 url=%s size=%d max=%d", baseUrl, len(rawBuf), maxM3U8Bytes)
 		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标 m3u8 响应体过大，已拒绝处理"})
 		return
 	}
@@ -532,7 +531,7 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 			_, _ = rec.Write(rawBuf)
 			return
 		}
-		log.Printf("[M3U8] 403 内容非UTF-8且非m3u8 url=%s", baseUrl)
+		logWarnf("[M3U8] 403 内容非UTF-8且非m3u8 url=%s", baseUrl)
 		sendJSON(rec, http.StatusForbidden, map[string]string{
 			"error": "目标内容不是有效的 m3u8 播放列表，拒绝代理",
 		})
@@ -541,7 +540,7 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 
 	body := string(rawBuf)
 	if !looksLikeM3U8(body) {
-		log.Printf("[M3U8] 403 内容不像m3u8 url=%s head=%q", baseUrl, string(rawBuf[:min(len(rawBuf), 100)]))
+		logWarnf("[M3U8] 403 内容不像m3u8 url=%s head=%q", baseUrl, string(rawBuf[:min(len(rawBuf), 100)]))
 		sendJSON(rec, http.StatusForbidden, map[string]string{
 			"error": "目标内容不是有效的 m3u8 播放列表，拒绝代理",
 		})

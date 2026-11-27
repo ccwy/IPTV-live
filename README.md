@@ -99,6 +99,8 @@ services:
       # UPSTREAM_TLS_SKIP_VERIFY: "true"
       # 上游 User-Agent，默认 APTV 真实 UA（AptvPlayer-UA）；如需伪装其它播放器可覆盖
       # UPSTREAM_UA: "AptvPlayer-UA"
+      # 日志级别：debug / info / warn / error / off（越大越安静），默认 info（不打印逐请求日志）
+      # LOG_LEVEL: "info"
     restart: unless-stopped
     network_mode: bridge             # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
 ```
@@ -156,6 +158,7 @@ docker run -d -p 19890:19890 --env-file playlist.env iptv-live:latest
 | `UPSTREAM_UA` | 上游请求的 User-Agent；留空则用 APTV 真实 UA | `AptvPlayer-UA` | `-e UPSTREAM_UA="iPhone"` |
 | `ALLOW_PRIVATE_NETWORK` | 是否放行内网/保留地址（关闭 SSRF 防护） | `false` | `-e ALLOW_PRIVATE_NETWORK=true` |
 | `UPSTREAM_TLS_SKIP_VERIFY` | 是否跳过上游 TLS 证书校验（兼容自签名源） | `true` | `-e UPSTREAM_TLS_SKIP_VERIFY=false` |
+| `LOG_LEVEL` | 后端日志级别（越大越安静）：debug/info/warn/error/off | `info` | `-e LOG_LEVEL=warn` |
 
 > 说明：`UPSTREAM_UA` 不设置时默认使用 APTV 播放器真实 UA `AptvPlayer-UA`（部分直播源仅放行 APTV）；若某些源要求 `okhttp`/`OTT`/`iPhone` 等，用该变量覆盖即可。
 

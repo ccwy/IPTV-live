@@ -19,7 +19,7 @@ func initAesKey() {
 	if _, err := rand.Read(aesKey); err != nil {
 		log.Fatal("生成 AES 密钥失败: " + err.Error())
 	}
-	log.Println("流地址加密密钥: 随机生成（重启后旧 /stream 链接自动失效）")
+	logInfof("流地址加密密钥: 随机生成（重启后旧 /stream 链接自动失效）")
 }
 
 // encryptURL 用 AES-256-GCM 加密 URL，返回 URL-safe base64 编码的密文

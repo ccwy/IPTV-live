@@ -17,6 +17,8 @@ COPY --from=builder /iptv-live /iptv-live
 ENV PLAYLISTS=
 # 上游 User-Agent：默认 AptvPlayer-UA（APTV 真实 UA），可覆盖；留空则用默认
 ENV UPSTREAM_UA=""
+# 日志级别：debug/info/warn/error/off，默认 info（避免逐请求日志堆积）
+ENV LOG_LEVEL=""
 
 # 暴露端口（支持 PORT 环境变量覆盖，默认 19890）
 EXPOSE 19890

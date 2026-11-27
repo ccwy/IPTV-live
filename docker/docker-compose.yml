@@ -27,6 +27,9 @@ services:
       # 上游请求 User-Agent。默认使用 APTV 真实 UA（AptvPlayer-UA）；如需伪装其它播放器可覆盖，
       # 例如某些源要求 okhttp / OTT / iPhone。留空或不设置则用 APTV 默认。
       # UPSTREAM_UA: "AptvPlayer-UA"
+      # 日志级别：debug / info / warn / error / off（越大越安静），默认 info。
+      # info 不打印逐请求日志，避免长时间播放导致容器日志无限累积；排查问题时用 debug。
+      # LOG_LEVEL: "info"
     restart: unless-stopped
     # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
     network_mode: bridge

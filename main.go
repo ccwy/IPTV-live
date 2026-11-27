@@ -52,12 +52,12 @@ func loadPlaylists() {
 	}
 	var raw any
 	if err := json.Unmarshal([]byte(env), &raw); err != nil {
-		log.Println("PLAYLISTS 环境变量解析失败，已忽略: " + err.Error())
+		logWarnf("PLAYLISTS 环境变量解析失败，已忽略: %v", err)
 		return
 	}
 	arr, ok := raw.([]any)
 	if !ok {
-		log.Println("PLAYLISTS 环境变量不是 JSON 数组，已忽略")
+		logWarnf("PLAYLISTS 环境变量不是 JSON 数组，已忽略")
 		return
 	}
 	for _, item := range arr {
@@ -83,11 +83,11 @@ func main() {
 
 	http.HandleFunc("/", routeHandler)
 
-	log.Printf("IPTV Live 代理服务器已启动: http://localhost:%s", port)
+	logInfof("IPTV Live 代理服务器已启动: http://localhost:%s", port)
 	if len(builtinPlaylists) > 0 {
-		log.Printf("内置播放列表(PLAYLISTS): %d 个", len(builtinPlaylists))
+		logInfof("内置播放列表(PLAYLISTS): %d 个", len(builtinPlaylists))
 	} else {
-		log.Println("内置播放列表(PLAYLISTS): 未设置")
+		logInfof("内置播放列表(PLAYLISTS): 未设置")
 	}
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
