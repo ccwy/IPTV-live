@@ -121,6 +121,21 @@ body {
   text-overflow: ellipsis;
 }
 #channel-name-overlay.show { opacity: 1; }
+/* 线路切换条：同一频道的多个源地址，仅在多线路时显示 */
+#line-switch {
+  position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 6px; max-width: 90%; overflow-x: auto; padding: 2px;
+  z-index: 16; scrollbar-width: none;
+}
+#line-switch::-webkit-scrollbar { display: none; }
+#line-switch.hidden { display: none; }
+#line-switch .line-btn {
+  padding: 3px 10px; border-radius: 12px; border: 1px solid #1a4a7a;
+  background: rgba(0,0,0,.65); color: #a0c0e0; font-size: 12px; cursor: pointer;
+  white-space: nowrap; transition: background .2s, color .2s, border-color .2s;
+}
+#line-switch .line-btn:hover { background: #1a4a7a; color: #fff; }
+#line-switch .line-btn.active { background: #e94560; border-color: #e94560; color: #fff; }
 /* ===== 自建直播控制条 ===== */
 #player-controls {
   position: absolute; bottom: 0; left: 0; right: 0;
@@ -153,6 +168,7 @@ body {
   #sidebar.collapsed { margin-left: calc(-1 * clamp(220px, 30vw, 280px)); }
   #sidebar-toggle-float { display: block; }
   #channel-name-overlay { font-size: 12px; top: 50px; }
+  #line-switch { top: 84px; }
   /* 触摸友好：增大频道项点击区域，缩小缩略图与字体 */
   .channel-item { padding: 12px 14px; }
   .channel-logo { width: 36px; height: 36px; min-width: 36px; }
@@ -205,6 +221,7 @@ body {
   <div id="player-area">
     <video id="video" autoplay playsinline></video>
     <div id="channel-name-overlay"></div>
+    <div id="line-switch" class="hidden"></div>
     <div id="player-controls">
       <button id="btn-play" title="播放/暂停">▶</button>
       <button id="btn-mute" title="静音/取消静音">🔊</button>
@@ -236,11 +253,13 @@ body {
   var channelCount = document.getElementById('channel-count');
   var video = document.getElementById('video');
   var channelNameOverlay = document.getElementById('channel-name-overlay');
+  var lineSwitch = document.getElementById('line-switch');
 
   // 状态
   var allChannels = [];
   var currentChannel = null;
   var hls = null;
+  var triedLines = {};   // 当前播放已尝试过的线路索引（多线路自动切换防死循环）
   var overlayTimer = null;
   var statusTimer = null;
   var serverPlaylists = [];
@@ -342,7 +361,52 @@ body {
       channels.push(ch);
       pending = null;
     }
-    return channels;
+    return groupChannels(channels);
+  }
+
+  // 合并同名频道：同一频道名的多个源地址合并为一个频道，作为多条"线路"，支持线路切换
+  // 返回频道对象：{name, tvgId, tvgName, logo, group, lines:[{url}], lineIndex, url, _key}
+  function groupChannels(rawList) {
+    var map = {};        // name -> 合并后的频道
+    var order = [];      // 保持首次出现顺序
+    for (var i = 0; i < rawList.length; i++) {
+      var ch = rawList[i];
+      var name = (ch.name || '').trim() || '未知频道';
+      var merged = map[name];
+      if (!merged) {
+        merged = {
+          name: name,
+          tvgId: ch.tvgId || '',
+          tvgName: ch.tvgName || '',
+          logo: ch.logo || '',
+          group: ch.group || '未分组',
+          lines: [],
+          lineIndex: 0,
+          url: '',
+          _key: name
+        };
+        map[name] = merged;
+        order.push(merged);
+      } else {
+        // 补齐缺失的 logo / tvg 信息
+        if (!merged.logo && ch.logo) merged.logo = ch.logo;
+        if (!merged.tvgId && ch.tvgId) merged.tvgId = ch.tvgId;
+        if (!merged.tvgName && ch.tvgName) merged.tvgName = ch.tvgName;
+      }
+      // 加入源地址（去重相同 URL）
+      if (ch.url) {
+        var dup = false;
+        for (var j = 0; j < merged.lines.length; j++) {
+          if (merged.lines[j].url === ch.url) { dup = true; break; }
+        }
+        if (!dup) merged.lines.push({ url: ch.url });
+      }
+    }
+    // 设置默认线路为第 1 条
+    for (var k = 0; k < order.length; k++) {
+      if (order[k].lines.length > 0) order[k].url = order[k].lines[0].url;
+    }
+    return order;
   }
 
   function parseExtInf(line) {
@@ -378,7 +442,7 @@ body {
       .then(function(text) {
         var channels = parseM3U(text);
         if (channels.length === 0) throw new Error('未解析到任何频道');
-        allChannels = channels;
+        allChannels = channels; currentChannel = null; hideLineSwitch();
         currentPlaylistName = name || '';
         buildGroupSelect();
         renderChannelList();
@@ -408,7 +472,7 @@ body {
       .then(function(text) {
         var channels = parseM3U(text);
         if (channels.length === 0) throw new Error('未解析到任何频道');
-        allChannels = channels;
+        allChannels = channels; currentChannel = null; hideLineSwitch();
         currentPlaylistName = name || '';
         buildGroupSelect();
         renderChannelList();
@@ -435,7 +499,7 @@ body {
       }
       var key = 'local://' + Date.now();
       var name = (file && file.name) ? file.name.replace(/\.(m3u8?|txt)$/i, '') : '本地文件';
-      allChannels = channels;
+      allChannels = channels; currentChannel = null; hideLineSwitch();
       currentPlaylistName = name;
       buildGroupSelect();
       renderChannelList();
@@ -469,7 +533,7 @@ body {
       setStatus('未解析到任何频道', 'status-error');
       return;
     }
-    allChannels = channels;
+    allChannels = channels; currentChannel = null; hideLineSwitch();
     currentPlaylistName = name || item.name;
     buildGroupSelect();
     renderChannelList();
@@ -520,8 +584,8 @@ body {
     for (var i = 0; i < list.length; i++) {
       (function(ch) {
         var li = document.createElement('li');
-        li.className = 'channel-item' + (currentChannel && currentChannel.url === ch.url ? ' active' : '');
-        li.setAttribute('data-url', ch.url);
+        li.className = 'channel-item' + (currentChannel && currentChannel._key === ch._key ? ' active' : '');
+        li.setAttribute('data-key', ch._key);
 
         // logo（有图用img，无图用首字母占位）
         var logoEl;
@@ -552,7 +616,7 @@ body {
         nm.textContent = ch.name;
         var gp = document.createElement('div');
         gp.className = 'channel-group';
-        gp.textContent = ch.group || '未分组';
+        gp.textContent = (ch.group || '未分组') + (ch.lines && ch.lines.length > 1 ? ' · ' + ch.lines.length + '线路' : '');
         info.appendChild(nm);
         info.appendChild(gp);
         li.appendChild(info);
@@ -572,12 +636,59 @@ body {
     if (hls) { try { hls.destroy(); } catch(e) {} hls = null; }
   }
 
-  function playChannel(ch) {
+  // 隐藏线路切换条
+  function hideLineSwitch() {
+    if (!lineSwitch) return;
+    lineSwitch.classList.add('hidden');
+    lineSwitch.innerHTML = '';
+  }
+
+  // 渲染线路切换按钮（仅当当前频道有多条线路时显示）
+  function renderLineSwitch(ch) {
+    if (!lineSwitch) return;
+    if (!ch || !ch.lines || ch.lines.length <= 1) { hideLineSwitch(); return; }
+    lineSwitch.innerHTML = '';
+    for (var i = 0; i < ch.lines.length; i++) {
+      (function(idx) {
+        var b = document.createElement('button');
+        b.className = 'line-btn' + (idx === ch.lineIndex ? ' active' : '');
+        b.textContent = '线路' + (idx + 1);
+        b.addEventListener('click', function() { playChannel(ch, idx); });
+        lineSwitch.appendChild(b);
+      })(i);
+    }
+    lineSwitch.classList.remove('hidden');
+  }
+
+  // 多线路自动切换：当前线路致命失败时，切换到尚未尝试过的下一条线路（全部试过返回 false）
+  function tryNextLine(ch, reason) {
+    if (!ch || !ch.lines || ch.lines.length <= 1) return false;
+    for (var step = 1; step < ch.lines.length; step++) {
+      var idx = (ch.lineIndex + step) % ch.lines.length;
+      if (!triedLines[idx]) {
+        setStatus('线路' + (ch.lineIndex + 1) + '失败，切换线路' + (idx + 1) + '...', 'status-loading');
+        setTimeout(function() { playChannel(ch, idx, true); }, 300);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function playChannel(ch, lineIdx, isFailover) {
+    if (!ch || !ch.lines || ch.lines.length === 0) return;
+    if (typeof lineIdx !== 'number' || lineIdx < 0 || lineIdx >= ch.lines.length) lineIdx = ch.lineIndex || 0;
+    if (lineIdx < 0 || lineIdx >= ch.lines.length) lineIdx = 0;
+    ch.lineIndex = lineIdx;
+    ch.url = ch.lines[lineIdx].url;
     currentChannel = ch;
     destroyHls();
+    if (!isFailover) triedLines = {};
+    triedLines[lineIdx] = true;
+    var lineSuffix = ch.lines.length > 1 ? (' · 线路' + (lineIdx + 1) + '/' + ch.lines.length) : '';
     var streamUrl = proxyUrl(ch.url);
-    showChannelName(ch.name);
-    setStatus('正在连接: ' + ch.name, 'status-loading');
+    showChannelName(ch.name + lineSuffix);
+    renderLineSwitch(ch);
+    setStatus('正在连接: ' + ch.name + lineSuffix, 'status-loading');
 
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
@@ -610,7 +721,7 @@ body {
       var playbackStarted = false;
       var bufferedFragCount = 0;             // 已缓冲分片计数：缓冲1片即起播，减少起播先天落后，配合liveSyncDurationCount=8有足够余量
       hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        setStatus('缓冲中: ' + ch.name, 'status-loading');
+        setStatus('缓冲中: ' + ch.name + lineSuffix, 'status-loading');
         // 不立即 play：零缓冲起播会卡住，卡住期间落后直播边缘触发 seek 跳转；等 FRAG_BUFFERED 缓冲满1片后再播
       });
       hls.on(Hls.Events.FRAG_BUFFERED, function() {
@@ -618,7 +729,7 @@ body {
           bufferedFragCount++;
           if (bufferedFragCount >= 1) {
             playbackStarted = true;
-            setStatus('正在播放: ' + ch.name, 'status-ok');
+            setStatus('正在播放: ' + ch.name + lineSuffix, 'status-ok');
             video.play().catch(function() {});
           }
         }
@@ -626,6 +737,8 @@ body {
       hls.on(Hls.Events.ERROR, function(evt, data) {
         if (!data.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          // 多线路自动切换：当前线路致命失败则尝试尚未试过的其他线路，都试过才降级重试
+          if (tryNextLine(ch, data.details)) return;
           setStatus('网络错误，尝试恢复: ' + data.details, 'status-error');
           hls.startLoad();
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -640,14 +753,14 @@ body {
       // Safari 原生 HLS
       video.src = streamUrl;
       video.play().catch(function() {});
-      setStatus('正在播放: ' + ch.name, 'status-ok');
+      setStatus('正在播放: ' + ch.name + lineSuffix, 'status-ok');
     } else {
       setStatus(window.Hls ? '当前浏览器不支持 HLS 播放' : '视频解码库加载失败，请检查 js/hls.min.js 文件', 'status-error');
     }
     // 更新高亮（仅切换 active 类，不重建列表，避免大量频道时卡顿）
     var items = channelList.querySelectorAll('.channel-item');
     for (var i = 0; i < items.length; i++) {
-      items[i].classList.toggle('active', items[i].getAttribute('data-url') === ch.url);
+      items[i].classList.toggle('active', items[i].getAttribute('data-key') === ch._key);
     }
   }
 
