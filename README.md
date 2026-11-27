@@ -87,12 +87,14 @@ services:
   iptv-live:
     image: iptv-live:latest          # 本地导入的镜像名，无需从远程仓库拉取
     container_name: iptv-live
-    ports:
-      - "8883:19890"                  # 左侧为 NAS 访问端口，可按需修改
+    network_mode: host               # 默认 host：容器与宿主机共用网络，直接监听宿主端口 19890
+    # host 模式下端口映射不生效；如需改端口用下方 PORT，改回 bridge 时取消 ports 注释并改 network_mode
+    # ports:
+    #   - "8883:19890"
     environment:
       # 内置播放列表（JSON 数组，每项含 name 和 url）
       PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]'
-      # PORT: "19890"                 # 容器内端口，默认 19890；修改时需同步端口映射右侧
+      # PORT: "19890"                 # 监听端口（host 模式即宿主端口），默认 19890
       # 放行内网/保留地址（关闭 SSRF 防护），默认 false；代理同网段 NAS 直播源时设为 true
       # ALLOW_PRIVATE_NETWORK: "true"
       # 上游 TLS 证书校验，默认 true 跳过校验（兼容自签名源）；设 false 开启严格校验
@@ -100,7 +102,6 @@ services:
       # 上游 User-Agent，默认 APTV 真实 UA（AptvPlayer-UA）；如需伪装其它播放器可覆盖
       # UPSTREAM_UA: "AptvPlayer-UA"
     restart: unless-stopped
-    network_mode: bridge             # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
 ```
 
 **PLAYLISTS 格式说明**
@@ -115,7 +116,7 @@ services:
 - YAML 中 JSON 字符串需用**单引号**包裹，内部双引号无需转义
 - `PLAYLISTS` 控制侧边栏内置列表按钮，未设置则内置列表为空
 - 格式非法时不会导致服务崩溃，仅在日志输出警告并忽略
-- 启动后访问 `http://<NAS-IP>:8883` 即可观看
+- 启动后访问 `http://<NAS-IP>:19890` 即可观看（host 模式直接使用宿主端口；若设置了 `PORT` 则用对应端口）
 
 ### 配置内置播放列表
 
@@ -152,7 +153,7 @@ docker run -d -p 19890:19890 --env-file playlist.env iptv-live:latest
 | 变量 | 说明 | 默认值 | 示例 |
 |---|---|---|---|
 | `PLAYLISTS` | 内置播放列表（JSON 数组，每项含 `name`/`url`） | 空（内置列表为空） | `-e PLAYLISTS='[{"name":"CCTV","url":"https://example.com/cctv.m3u"}]'` |
-| `PORT` | 容器内监听端口（需与端口映射右侧一致） | `19890` | `-e PORT=3000` |
+| `PORT` | 监听端口（host 模式下即宿主机端口） | `19890` | `-e PORT=3000` |
 | `UPSTREAM_UA` | 上游请求的 User-Agent；留空则用 APTV 真实 UA | `AptvPlayer-UA` | `-e UPSTREAM_UA="iPhone"` |
 | `ALLOW_PRIVATE_NETWORK` | 是否放行内网/保留地址（关闭 SSRF 防护） | `false` | `-e ALLOW_PRIVATE_NETWORK=true` |
 | `UPSTREAM_TLS_SKIP_VERIFY` | 是否跳过上游 TLS 证书校验（兼容自签名源） | `true` | `-e UPSTREAM_TLS_SKIP_VERIFY=false` |

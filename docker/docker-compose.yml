@@ -8,15 +8,19 @@ services:
   iptv-live:
     image: iptv-live:latest
     container_name: iptv-live
-    ports:
-      # 端口映射：左侧为 NAS 访问端口（可按需修改），右侧为容器内端口
-      # 若修改容器内端口，需同步取消下方 PORT 注释并设为相同值
-      - "8883:19890"
+    # 网络模式：默认 host —— 容器与宿主机共用网络命名空间，不经过端口映射，
+    # 应用直接监听宿主机端口（默认 19890），访问 http://<NAS-IP>:19890 即可观看。
+    network_mode: host
+    # host 模式下 ports 端口映射不生效，故注释掉；如需改访问端口，设置下方 PORT 环境变量。
+    # 想改回 bridge（桥接 + 端口映射）时：把上面 network_mode 改为 bridge，并取消下面 ports 注释。
+    # ports:
+    #   # 端口映射：左侧为 NAS 访问端口（可按需修改），右侧为容器内端口
+    #   - "8883:19890"
     environment:
       # 内置播放列表，JSON 数组格式，每项含 name（显示名称）和 url（M3U 地址）
       # 整段用单引号包裹，内部双引号无需转义；可选，不设置则内置列表为空
       PLAYLISTS: '[{"name":"CCTV","url":"https://example.com/cctv.m3u"}]'
-      # 容器内监听端口，默认 19890；修改时需同步上方端口映射右侧的值
+      # 监听端口（host 模式下即宿主机端口），默认 19890；如需改访问端口改这里
       # PORT: "19890"
       # 放行内网/保留地址（关闭 SSRF 防护）。默认 false：代理禁止访问内网 IP（如 127.0.0.1、
       # 10.x、172.16-31.x、192.168.x、169.254.x 等），防止恶意 M3U 源探测内网服务。
@@ -28,8 +32,6 @@ services:
       # 例如某些源要求 okhttp / OTT / iPhone。留空或不设置则用 APTV 默认。
       # UPSTREAM_UA: "AptvPlayer-UA"
     restart: unless-stopped
-    # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
-    network_mode: bridge
     # 应用无持久化数据，无需挂载卷
     # 日志默认输出到 stdout，可通过「docker logs iptv-live」或 Container Manager 日志页查看
     # 如需将日志持久化到 NAS 目录，可取消下方注释
