@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -495,6 +496,11 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标 m3u8 响应体过大，已拒绝处理"})
 		return
 	}
+
+	// 去除 UTF-8 BOM（\xEF\xBB\xBF）：部分 IPTV 源文件带 BOM，
+	// 会导致首行 "#EXTM3U" 前多出 \uFEFF，strings.TrimSpace 不去除 BOM，
+	// 进而使标签识别失败、首行被误当成 URL 行重写。统一在此剥离。
+	rawBuf = bytes.TrimPrefix(rawBuf, []byte{0xEF, 0xBB, 0xBF})
 
 	// 编码容错：UTF-8 无效说明源内容非 UTF-8。
 	// 若前 7 字节为 #EXTM3U（ASCII），判定为非 UTF-8 编码的 m3u8，放弃重写直接透传原始字节（不重写比写坏好）；

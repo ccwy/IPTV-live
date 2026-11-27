@@ -92,7 +92,7 @@ func looksLikeM3U8(content string) bool {
 	if len(runes) > 512 {
 		runes = runes[:512]
 	}
-	head := strings.TrimSpace(string(runes))
+	head := strings.TrimSpace(strings.TrimPrefix(string(runes), "\ufeff"))
 	return strings.HasPrefix(head, "#EXTM3U") || strings.HasPrefix(head, "#EXTINF") || strings.HasPrefix(head, "#EXT-X")
 }
 
@@ -101,6 +101,8 @@ func rewriteM3U8(content, baseUrl string) string {
 	if content == "" {
 		return content
 	}
+	// 去除 UTF-8 BOM，避免首行标签被误判为 URL
+	content = strings.TrimPrefix(content, "\ufeff")
 	lines := lineSplitRe.Split(content, -1)
 
 	rewritten := make([]string, len(lines))
