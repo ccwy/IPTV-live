@@ -35,6 +35,18 @@ var allowPrivateNetwork = envBool("ALLOW_PRIVATE_NETWORK", false)
 // 设环境变量 UPSTREAM_TLS_SKIP_VERIFY=false 可开启严格证书校验
 var upstreamInsecureSkipVerify = envBool("UPSTREAM_TLS_SKIP_VERIFY", true)
 
+// 上游请求 User-Agent：默认使用 APTV 播放器真实 UA（AptvPlayer-UA；
+// 官方 APTV 列表即以此为 http-user-agent，部分直播源仅放行 APTV）。
+// 可通过环境变量 UPSTREAM_UA 覆盖；留空则回退到 APTV 默认 UA。
+const defaultUpstreamUA = "AptvPlayer-UA"
+
+var upstreamUserAgent = func() string {
+	if v := strings.TrimSpace(os.Getenv("UPSTREAM_UA")); v != "" {
+		return v
+	}
+	return defaultUpstreamUA
+}()
+
 // m3u8 响应体最大字节数（防止恶意上游返回超大内容导致内存耗尽）
 const maxM3U8Bytes = 10 * 1024 * 1024
 
@@ -226,7 +238,7 @@ func proxyByTargetUrl(rec *responseRecorder, r *http.Request, targetUrlStr strin
 	log.Printf("[PROXY] 请求结束 url=%s 耗时=%s", targetUrlStr, time.Since(requestStart))
 }
 
-// 构造转发请求头：复制必要头（含 referer/cookie），固定使用 APTV 播放器 UA
+// 构造转发请求头：复制必要头（含 referer/cookie），User-Agent 默认用 APTV 真实 UA，可用 UPSTREAM_UA 覆盖
 func buildForwardHeaders(r *http.Request) http.Header {
 	forwardHeaders := http.Header{}
 	for _, name := range []string{"Range", "Accept", "Accept-Language", "Referer", "Cookie"} {
@@ -234,8 +246,8 @@ func buildForwardHeaders(r *http.Request) http.Header {
 			forwardHeaders.Set(name, v)
 		}
 	}
-	// 固定 APTV（Apple TV 播放器）UA：部分直播源仅允许特定播放器 UA 访问
-	forwardHeaders.Set("User-Agent", "APTV/1.0")
+	// 上游 UA：默认 APTV 真实 UA（AptvPlayer-UA），可用环境变量 UPSTREAM_UA 覆盖
+	forwardHeaders.Set("User-Agent", upstreamUserAgent)
 	return forwardHeaders
 }
 
