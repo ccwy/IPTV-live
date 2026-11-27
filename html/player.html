@@ -692,6 +692,19 @@ body {
     renderLineSwitch(ch);
     setStatus('正在连接: ' + ch.name + lineSuffix, 'status-loading');
 
+    // 超时策略：多线路时用较短超时，坏源能快速失败并立即自动切换到下一源；
+    // 单线路无备选，放宽超时以容忍慢速源，避免误判。
+    var multiLine = ch.lines.length > 1;
+    var hlsTimeouts = multiLine ? {
+      manifestLoadingTimeOut: 8000,  manifestLoadingMaxRetry: 1, manifestLoadingRetryDelay: 800,
+      levelLoadingTimeOut: 8000,     levelLoadingMaxRetry: 1,    levelLoadingRetryDelay: 800,
+      fragLoadingTimeOut: 15000,     fragLoadingMaxRetry: 3,     fragLoadingRetryDelay: 500
+    } : {
+      manifestLoadingTimeOut: 30000, manifestLoadingMaxRetry: 6, manifestLoadingRetryDelay: 1000,
+      levelLoadingTimeOut: 30000,    levelLoadingMaxRetry: 6,    levelLoadingRetryDelay: 1000,
+      fragLoadingTimeOut: 60000,     fragLoadingMaxRetry: 10,    fragLoadingRetryDelay: 500
+    };
+
     if (window.Hls && Hls.isSupported()) {
       hls = new Hls({
         liveSyncDurationCount: 8,                // 播放点距直播边缘8个分片，给网络波动和代理延迟留更多余量
@@ -704,15 +717,15 @@ body {
         abrEwmaDefaultEstimate: 500000,          // 初始带宽估计500kbps，保守起播避免直接拉高码率
         abrBandWidthFactor: 0.95,                // ABR带宽安全系数，减少码率频繁切换
         abrBandWidthUpFactor: 0.7,               // 升级码率更保守，避免频繁升降导致SPS/PPS切换花屏
-        manifestLoadingTimeOut: 30000,           // manifest加载超时从10秒延长到30秒
-        manifestLoadingMaxRetry: 6,              // manifest重试从2次增加到6次
-        manifestLoadingRetryDelay: 1000,         // manifest重试间隔1秒
-        levelLoadingTimeOut: 30000,              // 级别加载超时从10秒延长到30秒
-        levelLoadingMaxRetry: 6,                 // 级别加载重试6次
-        levelLoadingRetryDelay: 1000,            // 级别加载重试间隔1秒
-        fragLoadingTimeOut: 60000,               // 分片加载超时从20秒延长到60秒
-        fragLoadingMaxRetry: 10,                 // 分片加载重试10次，弱网兜底
-        fragLoadingRetryDelay: 500,              // 分片重试间隔500ms
+        manifestLoadingTimeOut: hlsTimeouts.manifestLoadingTimeOut,
+        manifestLoadingMaxRetry: hlsTimeouts.manifestLoadingMaxRetry,
+        manifestLoadingRetryDelay: hlsTimeouts.manifestLoadingRetryDelay,
+        levelLoadingTimeOut: hlsTimeouts.levelLoadingTimeOut,
+        levelLoadingMaxRetry: hlsTimeouts.levelLoadingMaxRetry,
+        levelLoadingRetryDelay: hlsTimeouts.levelLoadingRetryDelay,
+        fragLoadingTimeOut: hlsTimeouts.fragLoadingTimeOut,
+        fragLoadingMaxRetry: hlsTimeouts.fragLoadingMaxRetry,
+        fragLoadingRetryDelay: hlsTimeouts.fragLoadingRetryDelay,
         maxLiveSyncPlaybackRate: 1.1,            // 落后直播边缘时以1.1倍速温和追赶，几乎无感，避免直接seek跳转造成画面跳跃
         startFragPrefetch: true,                 // manifest解析后立即预取首片，配合延迟起播策略尽早开始下载
         liveDurationInfinity: true               // 直播场景 MediaSource duration 设为 Infinity，避免 seek 越界
