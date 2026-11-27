@@ -22,6 +22,8 @@ services:
       # 10.x、172.16-31.x、192.168.x、169.254.x 等），防止恶意 M3U 源探测内网服务。
       # 设为 true 时防护完全关闭，仅建议在受控内网环境使用（如访问同网段 NAS 上的直播源）
       # ALLOW_PRIVATE_NETWORK: "true"
+      # 上游 TLS 证书校验：默认 true 跳过校验（兼容自签名源）；设 false 开启严格校验
+      # UPSTREAM_TLS_SKIP_VERIFY: "true"
       # 上游请求 User-Agent。默认使用 APTV 真实 UA（AptvPlayer-UA）；如需伪装其它播放器可覆盖，
       # 例如某些源要求 okhttp / OTT / iPhone。留空或不设置则用 APTV 默认。
       # UPSTREAM_UA: "AptvPlayer-UA"

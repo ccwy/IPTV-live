@@ -93,6 +93,12 @@ services:
       # 内置播放列表（JSON 数组，每项含 name 和 url）
       PLAYLISTS: '[{"name":"IPTV-Global","url":"https://iptv-org.github.io/iptv/index.m3u"},{"name":"CCTV","url":"https://example.com/cctv.m3u"},{"name":"港澳台","url":"https://example.com/hk-mo-tw.m3u"}]'
       # PORT: "19890"                 # 容器内端口，默认 19890；修改时需同步端口映射右侧
+      # 放行内网/保留地址（关闭 SSRF 防护），默认 false；代理同网段 NAS 直播源时设为 true
+      # ALLOW_PRIVATE_NETWORK: "true"
+      # 上游 TLS 证书校验，默认 true 跳过校验（兼容自签名源）；设 false 开启严格校验
+      # UPSTREAM_TLS_SKIP_VERIFY: "true"
+      # 上游 User-Agent，默认 APTV 真实 UA（AptvPlayer-UA）；如需伪装其它播放器可覆盖
+      # UPSTREAM_UA: "AptvPlayer-UA"
     restart: unless-stopped
     network_mode: bridge             # 网络模式：bridge（桥接），容器通过端口映射对外提供服务
 ```
@@ -138,6 +144,20 @@ docker run -d -p 19890:19890 --env-file playlist.env iptv-live:latest
 - `PLAYLISTS` 控制侧边栏内置列表按钮，未设置则内置列表为空
 - `PLAYLISTS` 格式非法时不会导致服务崩溃，仅在日志输出警告并忽略
 - 加载优先级：上次使用的 URL（localStorage） > 内置列表第一项；都未设置则输入框留空，手动输入即可
+
+## 环境变量
+
+所有可用环境变量（留空/未设置时使用默认值）：
+
+| 变量 | 说明 | 默认值 | 示例 |
+|---|---|---|---|
+| `PLAYLISTS` | 内置播放列表（JSON 数组，每项含 `name`/`url`） | 空（内置列表为空） | `-e PLAYLISTS='[{"name":"CCTV","url":"https://example.com/cctv.m3u"}]'` |
+| `PORT` | 容器内监听端口（需与端口映射右侧一致） | `19890` | `-e PORT=3000` |
+| `UPSTREAM_UA` | 上游请求的 User-Agent；留空则用 APTV 真实 UA | `AptvPlayer-UA` | `-e UPSTREAM_UA="iPhone"` |
+| `ALLOW_PRIVATE_NETWORK` | 是否放行内网/保留地址（关闭 SSRF 防护） | `false` | `-e ALLOW_PRIVATE_NETWORK=true` |
+| `UPSTREAM_TLS_SKIP_VERIFY` | 是否跳过上游 TLS 证书校验（兼容自签名源） | `true` | `-e UPSTREAM_TLS_SKIP_VERIFY=false` |
+
+> 说明：`UPSTREAM_UA` 不设置时默认使用 APTV 播放器真实 UA `AptvPlayer-UA`（部分直播源仅放行 APTV）；若某些源要求 `okhttp`/`OTT`/`iPhone` 等，用该变量覆盖即可。
 
 ## 使用方法
 
