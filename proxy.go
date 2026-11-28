@@ -53,22 +53,18 @@ const maxM3U8Bytes = 10 * 1024 * 1024
 // SSRF 拦截错误（连接内网/保留地址时返回）
 var errSSRFBlocked = errors.New("target address is in a blocked private/reserved network range")
 
-// 需要从目标响应中移除的头（会干扰 CORS 或缓存）
-var stripHeaders = map[string]bool{
-	"access-control-allow-origin":         true,
-	"access-control-allow-methods":        true,
-	"access-control-allow-headers":        true,
-	"access-control-allow-credentials":    true,
-	"access-control-expose-headers":       true,
-	"access-control-max-age":              true,
-	"content-security-policy":             true,
-	"content-security-policy-report-only": true,
-	"x-frame-options":                     true,
-	"strict-transport-security":           true,
-	"content-encoding":                    true,
-	"transfer-encoding":                   true,
-	"connection":                          true,
-	"keep-alive":                          true,
+// 允许从上游透传给客户端的安全响应头【白名单】。
+// 只放行媒体分发/断点续传所需的最小集合；其余响应头一律丢弃——
+// 从而阻断 Set-Cookie、Content-Disposition、Content-Security-Policy、Refresh、Link、
+// Set-Cookie、X-* 等被上游注入或干扰本站的问题（白名单而非黑名单，未知头默认不放行）。
+var forwardResponseHeaders = map[string]bool{
+	"content-length": true,
+	"content-range":  true,
+	"accept-ranges":  true,
+	"cache-control":  true,
+	"expires":        true,
+	"last-modified":  true,
+	"etag":           true,
 }
 
 // 本机地址匹配（referer 改写判断用）
@@ -608,11 +604,9 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 	if !utf8.Valid(rawBuf) {
 		if len(rawBuf) >= 7 && string(rawBuf[:7]) == "#EXTM3U" {
 			setCorsHeaders(rec)
-			ct := contentType
-			if ct == "" {
-				ct = "application/vnd.apple.mpegurl"
-			}
-			rec.Header().Set("Content-Type", ct)
+			// 白名单：非 UTF-8 的 m3u 一律按 mpegurl 输出，绝不复用上游 Content-Type（防 text/html 反射 XSS）
+			rec.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			rec.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 			rec.Header().Set("Content-Length", strconv.Itoa(len(rawBuf)))
 			rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 			rec.Header().Set("Pragma", "no-cache")
@@ -638,6 +632,7 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 	body = rewriteM3U8(body, baseUrl)
 	setCorsHeaders(rec)
 	rec.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
+	rec.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	rec.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	// 禁用浏览器缓存：直播播放列表必须每次拉取最新版本，旧播放列表会导致播放跳帧
 	rec.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -649,12 +644,10 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 // safeStreamContentType 计算对外安全的 Content-Type：仅保留媒体类类型，
 // 其余（含 text/html 等可渲染类型）统一降级为 application/octet-stream，杜绝反射 XSS。
 func safeStreamContentType(upstream string) string {
-	ct := strings.ToLower(strings.TrimSpace(strings.Split(upstream, ";")[0]))
-	if strings.HasPrefix(ct, "video/") || strings.HasPrefix(ct, "audio/") ||
-		strings.Contains(ct, "octet-stream") || strings.Contains(ct, "mpegurl") {
-		return upstream // 保留媒体类型（可能带原始参数）
+	if isMediaContentType(upstream) {
+		return upstream // 命中媒体白名单才保留原始类型
 	}
-	return "application/octet-stream"
+	return "application/octet-stream" // 其余一律降级，杜绝反射 XSS
 }
 
 // 流式转发非 m3u8 响应（视频段等大文件，支持 Range/seek）
@@ -701,11 +694,12 @@ func streamResponse(rec *responseRecorder, resp *http.Response) {
 	}
 }
 
-// 过滤目标响应头，移除干扰 CORS 的头
+// filterHeaders 按【白名单】过滤上游响应头：仅保留 forwardResponseHeaders 中列出的安全头，
+// 其余（Set-Cookie、Content-Disposition、CSP、Refresh、X-* 等）一律丢弃。
 func filterHeaders(headers http.Header) http.Header {
 	result := http.Header{}
 	for k, vs := range headers {
-		if stripHeaders[strings.ToLower(k)] {
+		if !forwardResponseHeaders[strings.ToLower(k)] {
 			continue
 		}
 		result[k] = vs

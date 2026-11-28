@@ -6,15 +6,18 @@
 
 - 解析并播放 M3U/M3U8 播放列表（内置列表通过 `PLAYLISTS` 环境变量配置，未设置则列表为空）
 - 内置 CORS 代理服务器，解决浏览器跨域限制
-- 自动重写 M3U8 中的媒体段、子播放列表、密钥 URI，全部走代理
+- 自动重写 M3U8 中的媒体段、子播放列表、密钥 URI，全部改写为 `/stream` 加密代理地址（真实源地址不下发前端）
 - 支持 Range 请求透传（视频 seek）
 - 频道搜索、分组筛选、频道 logo 显示
 - 支持自定义播放列表 URL 和本地文件上传
 - 记住上次使用的播放列表 URL（localStorage）
 - 多播放列表支持：侧边栏显示当前播放列表名称，频道计数区实时体现（列表名 · 共 X / Y 个频道）
 - 自建直播控制条：播放/暂停按钮、静音/音量调节、LIVE 徽章、画面比例切换（适应/铺满/拉伸）、全屏，鼠标移出自动隐藏
-- 代理增强：自动跟随重定向（最多5次）、转发 Referer/Cookie 防盗链、支持自签名 HTTPS 证书、60秒超时、非 UTF-8 编码容错
-- 上游 User-Agent 可配置：默认使用 APTV 播放器真实 UA（`AptvPlayer-UA`，部分直播源仅放行 APTV），可通过环境变量 `UPSTREAM_UA` 覆盖（如源要求 `okhttp`/`OTT`/`iPhone` 等）
+- 代理增强：自动跟随重定向（最多5次）、按目标同域改写 Referer 规避防盗链（不转发客户端 Cookie）、支持自签名 HTTPS 证书、60秒超时、非 UTF-8 编码容错
+- 多线路聚合：同一频道有多个播放源时合并为一个频道（列表显示「N线路」），底部控制条 LIVE 后下拉切换线路；某线路致命失败时自动切到下一条未尝试的线路
+- 流地址加密：M3U8 中的子列表/分片/密钥地址经 AES-256-GCM 加密后以 `/stream?s=<密文>` 下发，前端不接触真实源地址
+- 安全加固：SSRF 防护（默认拦截内网/保留地址与云元数据）、上游内容类型与响应头白名单（阻断反射 XSS 与响应头注入）、对外错误信息脱敏（细节写后端日志）
+- 上游 User-Agent 可配置：默认使用 APTV 播放器真实 UA（`AptvPlayer`，部分直播源仅放行 APTV），可通过环境变量 `UPSTREAM_UA` 覆盖（如源要求 `okhttp`/`OTT`/`iPhone` 等）
 - 深色主题，响应式布局，移动端适配（侧边栏覆盖式布局、小屏自动收起）
 
 ## 快速开始
@@ -97,8 +100,8 @@ services:
       # ALLOW_PRIVATE_NETWORK: "true"
       # 上游 TLS 证书校验，默认 true 跳过校验（兼容自签名源）；设 false 开启严格校验
       # UPSTREAM_TLS_SKIP_VERIFY: "true"
-      # 上游 User-Agent，默认 APTV 真实 UA（AptvPlayer-UA）；如需伪装其它播放器可覆盖
-      # UPSTREAM_UA: "AptvPlayer-UA"
+      # 上游 User-Agent，默认 APTV 真实 UA（AptvPlayer）；如需伪装其它播放器可覆盖
+      # UPSTREAM_UA: "AptvPlayer"
       # 日志级别：debug / info / warn / error / off（越大越安静），默认 info（不打印逐请求日志）
       # LOG_LEVEL: "info"
     restart: unless-stopped
@@ -155,12 +158,12 @@ docker run -d -p 19890:19890 --env-file playlist.env iptv-live:latest
 |---|---|---|---|
 | `PLAYLISTS` | 内置播放列表（JSON 数组，每项含 `name`/`url`） | 空（内置列表为空） | `-e PLAYLISTS='[{"name":"CCTV","url":"https://example.com/cctv.m3u"}]'` |
 | `PORT` | 容器内监听端口（需与端口映射右侧一致） | `19890` | `-e PORT=3000` |
-| `UPSTREAM_UA` | 上游请求的 User-Agent；留空则用 APTV 真实 UA | `AptvPlayer-UA` | `-e UPSTREAM_UA="iPhone"` |
+| `UPSTREAM_UA` | 上游请求的 User-Agent；留空则用 APTV 真实 UA | `AptvPlayer` | `-e UPSTREAM_UA="iPhone"` |
 | `ALLOW_PRIVATE_NETWORK` | 是否放行内网/保留地址（关闭 SSRF 防护） | `false` | `-e ALLOW_PRIVATE_NETWORK=true` |
 | `UPSTREAM_TLS_SKIP_VERIFY` | 是否跳过上游 TLS 证书校验（兼容自签名源） | `true` | `-e UPSTREAM_TLS_SKIP_VERIFY=false` |
 | `LOG_LEVEL` | 后端日志级别（越大越安静）：debug/info/warn/error/off | `info` | `-e LOG_LEVEL=warn` |
 
-> 说明：`UPSTREAM_UA` 不设置时默认使用 APTV 播放器真实 UA `AptvPlayer-UA`（部分直播源仅放行 APTV）；若某些源要求 `okhttp`/`OTT`/`iPhone` 等，用该变量覆盖即可。
+> 说明：`UPSTREAM_UA` 不设置时默认使用 APTV 播放器真实 UA `AptvPlayer`（部分直播源仅放行 APTV）；若某些源要求 `okhttp`/`OTT`/`iPhone` 等，用该变量覆盖即可。
 
 ## 使用方法
 
@@ -172,22 +175,26 @@ docker run -d -p 19890:19890 --env-file playlist.env iptv-live:latest
 
 ## 技术栈
 
-- **后端**：Go 标准库（net/http / net/url / crypto/tls / embed），零外部依赖，经 go:embed 将静态资源编译进二进制，Docker 镜像基于 scratch 最小化
+- **后端**：Go 标准库（net/http / net/url / crypto/tls / crypto/aes / embed），零外部依赖，经 go:embed 将静态资源编译进二进制，Docker 镜像基于 scratch 最小化
 - **前端**：单文件 HTML + 内联 CSS/JS，[hls.js](https://github.com/video-dev/hls.js/)（本地引入）；自建直播控制条（播放/暂停、音量、画面比例、全屏），无第三方 UI 库
-- **代理**：`/proxy?url=<encodeURIComponent(目标URL)>` 端点，流式转发 + M3U8 内容重写
+- **代理端点**：`/playlist?id=<n>`（按 id 代理内置列表）、`/proxy?url=<encodeURIComponent(目标URL)>`（通用代理）、`/stream?s=<AES密文>`（重写后下发的加密流地址，后端解密后代理）；`/config` 返回内置列表 `{id,name}`（不含 url），`/health` 健康检查
   - 自动跟随 301/302/303/307/308 重定向（最多 5 次跳转，支持相对路径 Location）
-  - 转发 Referer/Cookie 头，本站地址自动改写为目标同域，规避防盗链 403
-  - HTTPS 放宽证书校验（`tls.Config{InsecureSkipVerify: true}`），兼容自签名证书源
-  - 连接超时 60 秒，慢速源友好
-  - 非 UTF-8 编码的 M3U8 检测到乱码时放弃重写、透传原始内容
+  - 按目标同域改写 Referer 规避防盗链 403；不再转发客户端 Cookie
+  - SSRF 防护：连接前校验目标 IP，默认拦截内网/保留地址与云元数据（`ALLOW_PRIVATE_NETWORK=true` 可放开）
+  - 响应安全：上游内容类型与响应头走白名单（非媒体类型降级为 `application/octet-stream`、仅透传安全响应头），并附加 CSP/`X-Content-Type-Options: nosniff`
+  - 对外错误信息脱敏：仅返回通用文案，详细原因（含 dial 错误等）写入后端日志（受 `LOG_LEVEL` 控制）
+  - HTTPS 放宽证书校验（`InsecureSkipVerify`，可用 `UPSTREAM_TLS_SKIP_VERIFY=false` 开启严格校验），兼容自签名证书源
+  - 连接超时 60 秒，慢速源友好；非 UTF-8 编码的 M3U8 检测到乱码时透传原始内容
 - **静态资源**：经 go:embed 编译进二进制，运行时无需外部文件
 
 ## 项目结构
 
 ```
 ├── main.go          # 入口：配置加载、路由、静态文件服务
-├── proxy.go         # CORS 代理：重定向跟随、M3U8 检测、流式转发
-├── rewrite.go       # M3U8 内容重写、URL 解析、encodeURIComponent
+├── proxy.go         # CORS 代理：重定向跟随、M3U8 检测、流式转发、SSRF 防护、响应头白名单
+├── rewrite.go       # M3U8 内容重写、内容类型白名单、URL 解析、encodeURIComponent
+├── crypto.go        # 流地址 AES-256-GCM 加解密（/stream 密文）
+├── logger.go        # 日志级别控制（LOG_LEVEL）
 ├── embed.go         # go:embed 静态资源嵌入
 ├── go.mod           # Go 模块定义（零外部依赖）
 ├── html/

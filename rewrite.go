@@ -39,78 +39,44 @@ func isM3U8ContentType(contentType string) bool {
 // 视频分片和密钥的 URL 后缀白名单（Path 不含 query，后缀匹配可靠）
 var streamSegmentExts = []string{".ts", ".m4s", ".cmfv", ".mp4", ".key", ".aac"}
 
-// 明确非直播内容的 URL 后缀黑名单（快速拒绝，避免误判）
-var nonStreamExts = []string{
-	".html", ".htm", ".json", ".xml", ".png", ".jpg", ".jpeg", ".gif",
-	".svg", ".css", ".js", ".txt", ".pdf", ".zip", ".ico",
-	".woff", ".woff2", ".ttf", ".doc", ".docx", ".xls", ".xlsx",
-}
-
-// 可被浏览器渲染/执行的内容类型：代理此类内容会导致反射型 XSS / 开放代理滥用，一律拒绝
-var dangerousContentTypes = []string{
-	"text/html", "application/xhtml+xml", "text/xml", "application/xml",
-	"application/json", "application/javascript", "text/javascript",
-	"application/ecmascript", "text/ecmascript", "image/svg+xml",
-}
-
-// isDangerousContentType 判断内容类型是否为可渲染/可执行的危险类型（防反射 XSS）
-func isDangerousContentType(ct string) bool {
+// isMediaContentType 媒体内容类型白名单：只有这些类型才会被原样透传给浏览器，其余一律降级为
+// application/octet-stream。采用白名单（而非黑名单）——不在名单内的一律视为不安全，从根本上
+// 杜绝未知/变体类型（text/html、application/x-javascript、image/svg+xml……）造成的反射 XSS。
+func isMediaContentType(ct string) bool {
 	if ct == "" {
 		return false
 	}
 	base := strings.ToLower(strings.TrimSpace(strings.Split(ct, ";")[0]))
-	for _, d := range dangerousContentTypes {
-		if base == d {
-			return true
-		}
+	if strings.HasPrefix(base, "video/") || strings.HasPrefix(base, "audio/") {
+		return true
+	}
+	switch base {
+	case "application/octet-stream", "binary/octet-stream",
+		"application/vnd.apple.mpegurl", "application/x-mpegurl", "application/mpegurl":
+		return true
 	}
 	return false
 }
 
 // isAllowedStreamContent 判断非 m3u8 响应是否为合法的直播流分片或加密密钥。
-// 判断优先级：URL 后缀白名单 > URL 后缀黑名单 > Content-Type 白名单 > 默认拒绝。
-// 这样既能放行 .ts/.m4s 等明确分片，也能通过 Content-Type 放行无后缀但返回 video/* 的分片，
-// 同时拒绝 HTML/JSON/图片等非直播内容，防止 /proxy 被当作开放代理滥用。
+// 白名单策略：仅当上游 Content-Type 命中媒体白名单时放行；Content-Type 缺失时按分片后缀兜底放行；
+// 其余（任何非媒体类型，无论 URL 后缀）一律拒绝。对外 Content-Type 还会再经 safeStreamContentType
+// 白名单收敛，构成双层白名单防护。
 func isAllowedStreamContent(contentType, urlPath string) bool {
 	ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-
-	// 0. 安全优先：可渲染/可执行类型（text/html、application/json 等）一律拒绝，
-	//    即使 URL 后缀命中白名单也不例外——杜绝"加 .ts 后缀反射任意 HTML/JS"的绕过与 XSS。
-	if isDangerousContentType(ct) {
-		return false
+	// 1. Content-Type 命中媒体白名单 → 放行
+	if isMediaContentType(ct) {
+		return true
 	}
-
-	// 1. URL 后缀白名单：明确的视频分片或密钥后缀
-	for _, ext := range streamSegmentExts {
-		if strings.HasSuffix(urlPath, ext) {
-			return true
-		}
-	}
-
-	// 2. URL 后缀黑名单：明确的非直播内容
-	for _, ext := range nonStreamExts {
-		if strings.HasSuffix(urlPath, ext) {
-			return false
+	// 2. Content-Type 缺失（部分源不返回）→ 按分片后缀兜底放行
+	if ct == "" {
+		for _, ext := range streamSegmentExts {
+			if strings.HasSuffix(urlPath, ext) {
+				return true
+			}
 		}
 	}
-
-	// 3. Content-Type 白名单：URL 后缀无法判断时，按媒体类型放行
-	if ct != "" {
-		if strings.HasPrefix(ct, "video/") {
-			return true // video/mp2t, video/mp4 等
-		}
-		if strings.HasPrefix(ct, "audio/") {
-			return true // 音频分片
-		}
-		if strings.Contains(ct, "octet-stream") {
-			return true // AES 密钥或二进制分片（application/octet-stream / binary/octet-stream）
-		}
-		if strings.Contains(ct, "mpegurl") {
-			return true // m3u8 变体（兜底）
-		}
-	}
-
-	// 4. 默认拒绝：无已知后缀且 Content-Type 不匹配 → 不是直播内容
+	// 3. 其余（非媒体类型 / 非分片后缀）一律拒绝
 	return false
 }
 
