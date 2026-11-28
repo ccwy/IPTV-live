@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // 配置常量
@@ -89,7 +90,15 @@ func main() {
 	} else {
 		logInfof("内置播放列表(PLAYLISTS): 未设置")
 	}
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	// 显式 http.Server：设置读取请求头/空闲超时，缓解 slowloris 等慢速连接攻击。
+	// 不设 WriteTimeout：直播为长连接流式传输，写超时会中断正在播放的直播流。
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           nil,
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

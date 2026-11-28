@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -34,10 +35,10 @@ var allowPrivateNetwork = envBool("ALLOW_PRIVATE_NETWORK", false)
 // 设环境变量 UPSTREAM_TLS_SKIP_VERIFY=false 可开启严格证书校验
 var upstreamInsecureSkipVerify = envBool("UPSTREAM_TLS_SKIP_VERIFY", true)
 
-// 上游请求 User-Agent：默认使用 APTV 播放器真实 UA（AptvPlayer-UA；
+// 上游请求 User-Agent：默认使用 APTV 播放器真实 UA（AptvPlayer；
 // 官方 APTV 列表即以此为 http-user-agent，部分直播源仅放行 APTV）。
 // 可通过环境变量 UPSTREAM_UA 覆盖；留空则回退到 APTV 默认 UA。
-const defaultUpstreamUA = "AptvPlayer-UA"
+const defaultUpstreamUA = "AptvPlayer"
 
 var upstreamUserAgent = func() string {
 	if v := strings.TrimSpace(os.Getenv("UPSTREAM_UA")); v != "" {
@@ -90,7 +91,7 @@ var upstreamClient = &http.Client{
 			Control:   dialControl, // SSRF 防护：连接前校验目标 IP
 		}).DialContext,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: upstreamInsecureSkipVerify}, // 放宽自签名证书校验，部分小众源自签名
-		TLSHandshakeTimeout:   60 * time.Second, // 与连接超时一致，避免 TLS 握手阶段过早超时
+		TLSHandshakeTimeout:   60 * time.Second,                                            // 与连接超时一致，避免 TLS 握手阶段过早超时
 		ResponseHeaderTimeout: 60 * time.Second,
 		DisableCompression:    true, // 请求已显式 Accept-Encoding: identity，禁止自动解压干扰头透传
 		// 连接池扩容：hls.js 并发拉取分片时复用空闲连接，避免频繁重建连接造成交付抖动
@@ -98,7 +99,7 @@ var upstreamClient = &http.Client{
 		MaxIdleConnsPerHost: 20,
 		IdleConnTimeout:     90 * time.Second,
 		// 启用 HTTP/2 多路复用：https 上游所有分片请求共享单连接，避免每分片新建 TCP/TLS 连接的冷启动延迟与并发抖动
-		ForceAttemptHTTP2:   true,
+		ForceAttemptHTTP2: true,
 	},
 }
 
@@ -129,6 +130,48 @@ func (r *responseRecorder) Flush() {
 		flusher.Flush()
 	}
 }
+
+// ===== /playlist 响应缓存：缓解对上游的重复拉取（放大攻击），仅缓存成功(200)的最终响应 =====
+const playlistCacheTTL = 5 * time.Second
+
+type playlistCacheEntry struct {
+	header  http.Header
+	body    []byte
+	status  int
+	expires time.Time
+}
+
+var (
+	playlistCacheMu sync.Mutex
+	playlistCache   = map[int]playlistCacheEntry{}
+)
+
+// captureWriter 捕获代理输出（头+状态+体），用于在返回客户端前缓存成功的播放列表
+type captureWriter struct {
+	header http.Header
+	status int
+	buf    bytes.Buffer
+}
+
+func newCaptureWriter() *captureWriter { return &captureWriter{header: http.Header{}} }
+
+func (c *captureWriter) Header() http.Header { return c.header }
+
+func (c *captureWriter) WriteHeader(code int) {
+	if c.status == 0 {
+		c.status = code
+	}
+}
+
+func (c *captureWriter) Write(b []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.buf.Write(b)
+}
+
+// Flush 满足 http.Flusher（播放列表为小文件，不做流式，缓存后一次性回写）
+func (c *captureWriter) Flush() {}
 
 // 代理请求处理（通用代理，客户端通过 url 参数指定目标）
 func handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +224,53 @@ func handleBuiltinPlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proxyByTargetUrl(rec, r, builtinPlaylists[id].URL)
+	// 命中缓存直接返回（缓解对上游的重复拉取/放大攻击）
+	playlistCacheMu.Lock()
+	entry, ok := playlistCache[id]
+	playlistCacheMu.Unlock()
+	if ok && time.Now().Before(entry.expires) {
+		for k, vs := range entry.header {
+			for _, v := range vs {
+				rec.Header().Add(k, v)
+			}
+		}
+		rec.WriteHeader(entry.status)
+		_, _ = rec.Write(entry.body)
+		return
+	}
+
+	// 未命中：经捕获器执行真实代理；成功(200)则缓存最终响应体
+	cw := newCaptureWriter()
+	innerRec := &responseRecorder{ResponseWriter: cw}
+	proxyByTargetUrl(innerRec, r, builtinPlaylists[id].URL)
+
+	status := cw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if status == http.StatusOK {
+		hdr := make(http.Header, len(cw.header))
+		for k, vs := range cw.header {
+			hdr[k] = append([]string(nil), vs...)
+		}
+		playlistCacheMu.Lock()
+		playlistCache[id] = playlistCacheEntry{
+			header:  hdr,
+			body:    append([]byte(nil), cw.buf.Bytes()...),
+			status:  status,
+			expires: time.Now().Add(playlistCacheTTL),
+		}
+		playlistCacheMu.Unlock()
+	}
+
+	// 回写客户端
+	for k, vs := range cw.header {
+		for _, v := range vs {
+			rec.Header().Add(k, v)
+		}
+	}
+	rec.WriteHeader(status)
+	_, _ = rec.Write(cw.buf.Bytes())
 }
 
 // 代理核心逻辑：解析目标 URL 并转发请求（供 handleProxy 和 handleBuiltinPlaylist 共用）
@@ -240,12 +329,13 @@ func proxyByTargetUrl(rec *responseRecorder, r *http.Request, targetUrlStr strin
 // 构造转发请求头：复制必要头（含 referer/cookie），User-Agent 默认用 APTV 真实 UA，可用 UPSTREAM_UA 覆盖
 func buildForwardHeaders(r *http.Request) http.Header {
 	forwardHeaders := http.Header{}
-	for _, name := range []string{"Range", "Accept", "Accept-Language", "Referer", "Cookie"} {
+	// 不再透传客户端 Cookie，避免会话 Cookie 被转发到任意上游造成泄露
+	for _, name := range []string{"Range", "Accept", "Accept-Language", "Referer"} {
 		if v := r.Header.Get(name); v != "" {
 			forwardHeaders.Set(name, v)
 		}
 	}
-	// 上游 UA：默认 APTV 真实 UA（AptvPlayer-UA），可用环境变量 UPSTREAM_UA 覆盖
+	// 上游 UA：默认 APTV 真实 UA（AptvPlayer），可用环境变量 UPSTREAM_UA 覆盖
 	forwardHeaders.Set("User-Agent", upstreamUserAgent)
 	return forwardHeaders
 }
@@ -308,13 +398,12 @@ func fetchUpstream(rec *responseRecorder, r *http.Request, targetUrlStr string, 
 		if isTimeoutErr(err) {
 			logWarnf("[PROXY] 504 上游超时 url=%s err=%v", targetUrlStr, err)
 			sendJSON(rec, http.StatusGatewayTimeout, map[string]string{
-				"error": "连接目标服务器超时(60s): " + targetUrlStr,
+				"error": "连接目标服务器超时",
 			})
 		} else {
 			logWarnf("[PROXY] 502 无法连接目标服务器 url=%s err=%v", targetUrlStr, err)
 			sendJSON(rec, http.StatusBadGateway, map[string]string{
-				"error": "无法连接目标服务器: " + err.Error(),
-				"url":   targetUrlStr,
+				"error": "无法连接目标服务器",
 			})
 		}
 		return
@@ -499,7 +588,7 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 	rawBuf, err := io.ReadAll(io.LimitReader(resp.Body, maxM3U8Bytes+1))
 	if err != nil {
 		logWarnf("[M3U8] 502 读取响应体失败 url=%s err=%v", baseUrl, err)
-		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标服务器响应错误: " + err.Error()})
+		sendJSON(rec, http.StatusBadGateway, map[string]string{"error": "目标服务器响应错误"})
 		return
 	}
 	if len(rawBuf) > maxM3U8Bytes {
@@ -557,6 +646,17 @@ func handleM3U8Response(rec *responseRecorder, resp *http.Response, baseUrl, con
 	_, _ = rec.Write([]byte(body))
 }
 
+// safeStreamContentType 计算对外安全的 Content-Type：仅保留媒体类类型，
+// 其余（含 text/html 等可渲染类型）统一降级为 application/octet-stream，杜绝反射 XSS。
+func safeStreamContentType(upstream string) string {
+	ct := strings.ToLower(strings.TrimSpace(strings.Split(upstream, ";")[0]))
+	if strings.HasPrefix(ct, "video/") || strings.HasPrefix(ct, "audio/") ||
+		strings.Contains(ct, "octet-stream") || strings.Contains(ct, "mpegurl") {
+		return upstream // 保留媒体类型（可能带原始参数）
+	}
+	return "application/octet-stream"
+}
+
 // 流式转发非 m3u8 响应（视频段等大文件，支持 Range/seek）
 func streamResponse(rec *responseRecorder, resp *http.Response) {
 	defer resp.Body.Close()
@@ -565,10 +665,16 @@ func streamResponse(rec *responseRecorder, resp *http.Response) {
 	filtered := filterHeaders(resp.Header)
 	setCorsHeaders(rec)
 	for k, vs := range filtered {
+		if strings.EqualFold(k, "Content-Type") {
+			continue // Content-Type 统一由下方强制设置
+		}
 		for _, v := range vs {
 			rec.Header().Add(k, v)
 		}
 	}
+	// 强制安全 Content-Type + CSP：即使上游返回 HTML/JS 也不会在本站执行（纵深防御）
+	rec.Header().Set("Content-Type", safeStreamContentType(resp.Header.Get("Content-Type")))
+	rec.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	rec.WriteHeader(status304to200(resp.StatusCode))
 	// 流式拷贝响应体并累积刷新，降低直播流缓冲延迟；客户端断开或上游读取错误时静默结束
 	buf := make([]byte, 256*1024)

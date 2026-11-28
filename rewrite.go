@@ -46,11 +46,40 @@ var nonStreamExts = []string{
 	".woff", ".woff2", ".ttf", ".doc", ".docx", ".xls", ".xlsx",
 }
 
+// 可被浏览器渲染/执行的内容类型：代理此类内容会导致反射型 XSS / 开放代理滥用，一律拒绝
+var dangerousContentTypes = []string{
+	"text/html", "application/xhtml+xml", "text/xml", "application/xml",
+	"application/json", "application/javascript", "text/javascript",
+	"application/ecmascript", "text/ecmascript", "image/svg+xml",
+}
+
+// isDangerousContentType 判断内容类型是否为可渲染/可执行的危险类型（防反射 XSS）
+func isDangerousContentType(ct string) bool {
+	if ct == "" {
+		return false
+	}
+	base := strings.ToLower(strings.TrimSpace(strings.Split(ct, ";")[0]))
+	for _, d := range dangerousContentTypes {
+		if base == d {
+			return true
+		}
+	}
+	return false
+}
+
 // isAllowedStreamContent 判断非 m3u8 响应是否为合法的直播流分片或加密密钥。
 // 判断优先级：URL 后缀白名单 > URL 后缀黑名单 > Content-Type 白名单 > 默认拒绝。
 // 这样既能放行 .ts/.m4s 等明确分片，也能通过 Content-Type 放行无后缀但返回 video/* 的分片，
 // 同时拒绝 HTML/JSON/图片等非直播内容，防止 /proxy 被当作开放代理滥用。
 func isAllowedStreamContent(contentType, urlPath string) bool {
+	ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+
+	// 0. 安全优先：可渲染/可执行类型（text/html、application/json 等）一律拒绝，
+	//    即使 URL 后缀命中白名单也不例外——杜绝"加 .ts 后缀反射任意 HTML/JS"的绕过与 XSS。
+	if isDangerousContentType(ct) {
+		return false
+	}
+
 	// 1. URL 后缀白名单：明确的视频分片或密钥后缀
 	for _, ext := range streamSegmentExts {
 		if strings.HasSuffix(urlPath, ext) {
@@ -66,13 +95,15 @@ func isAllowedStreamContent(contentType, urlPath string) bool {
 	}
 
 	// 3. Content-Type 白名单：URL 后缀无法判断时，按媒体类型放行
-	if contentType != "" {
-		ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if ct != "" {
 		if strings.HasPrefix(ct, "video/") {
 			return true // video/mp2t, video/mp4 等
 		}
-		if ct == "application/octet-stream" {
-			return true // AES 密钥或二进制分片
+		if strings.HasPrefix(ct, "audio/") {
+			return true // 音频分片
+		}
+		if strings.Contains(ct, "octet-stream") {
+			return true // AES 密钥或二进制分片（application/octet-stream / binary/octet-stream）
 		}
 		if strings.Contains(ct, "mpegurl") {
 			return true // m3u8 变体（兜底）
@@ -97,6 +128,9 @@ func looksLikeM3U8(content string) bool {
 }
 
 // 将 m3u8/m3u 内容中的 URL 重写为代理 URL
+// 单次 m3u8 重写的最大行数：超过则放弃逐行重写（避免逐行 AES 加密导致 CPU 放大攻击）
+const maxRewriteLines = 50000
+
 func rewriteM3U8(content, baseUrl string) string {
 	if content == "" {
 		return content
@@ -104,6 +138,11 @@ func rewriteM3U8(content, baseUrl string) string {
 	// 去除 UTF-8 BOM，避免首行标签被误判为 URL
 	content = strings.TrimPrefix(content, "\ufeff")
 	lines := lineSplitRe.Split(content, -1)
+	if len(lines) > maxRewriteLines {
+		// 行数超限，判定为异常/滥用列表，原样返回不再逐行加密，防止 CPU 资源耗尽
+		logWarnf("[M3U8] 列表行数超限(%d > %d)，跳过重写以防 CPU 放大 url=%s", len(lines), maxRewriteLines, baseUrl)
+		return content
+	}
 
 	rewritten := make([]string, len(lines))
 	for i, line := range lines {
